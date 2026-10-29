@@ -1,0 +1,12 @@
+# Game code and data never go in this repo.
+*.xex
+*.xexp
+*.iso
+*.str
+crackdown-asset-key.txt
+cd/
+rex/
+fw/
+generated/
+build*/
+out/

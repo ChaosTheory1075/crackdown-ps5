@@ -1,0 +1,16 @@
+# Crackdown, Title Update 6 (0.0.6.1): default.xex with Default.xexp beside it
+# (the loader applies the patch). The analysis fixes are the PC recomp's
+# (saulob/crackdown-xbox360-recompiled config/tu6/, copied into config/ by the
+# workflow at its pinned commit).
+
+[project]
+name = "crackdown"
+sdk_version = "0.9.0"
+
+[entrypoint]
+file_path = "assets/default.xex"
+out_directory_path = "generated"
+includes = ["config/overrides.toml", "config/discovered-functions.toml"]
+# CRT setjmp/longjmp of the TU6 image.
+setjmp_address = 0x82B4B950
+longjmp_address = 0x82B4B2C0
