@@ -37,7 +37,9 @@ CONTENT   the game, Title Update 6 and the two DLC packs: installed or not,
           X installs one from install/, triangle (twice) uninstalls it.
 SAVES     BACK UP SAVES (to install/backups/), IMPORT an Xbox 360 save
           package from install/, RESTORE one of the backups.
-SETTINGS  FRAME RATE        60 (as fast as the PS5 runs it) or 30 locked (steady).
+SETTINGS  LANGUAGE          AUTO (the PS5's language) or any of the 13 on
+                            the disc.
+          FRAME RATE        60 (as fast as the PS5 runs it) or 30 locked (steady).
           ANTI-ALIASING     off or FXAA.
           TEXTURE FILTERING 2x to 16x anisotropic.
           GPU HELPER        a second graphics thread (on); turn it off if

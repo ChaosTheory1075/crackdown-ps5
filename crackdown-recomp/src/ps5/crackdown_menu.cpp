@@ -42,6 +42,7 @@ int scePadInit(void);
 int scePadOpen(int32_t user_id, int32_t type, int32_t index, const void* param);
 int scePadGetHandle(int32_t user_id, int32_t type, int32_t index);
 int scePadReadState(int32_t handle, void* data);
+int sceSystemServiceParamGetInt(int param_id, int* value);
 }
 
 // The fonts, built into the app (gta4-ps5's ps5/assets/fonts: Oswald and
@@ -141,8 +142,52 @@ class Pad {
 
 // ---- the settings (app/menu.ini: key=value lines) ----
 
+// The game's languages: the 13 text folders the disc has (game/Local; Title Update 6 adds none),
+// by the number the title gives them (crackdown_locale, locale_ps5.cpp), with the Xbox 360
+// language the console is said to have for each (XGetLanguage, XCONFIG_USER_LANGUAGE). AUTO is
+// the PS5's own language.
+struct Language {
+  const char* name;
+  int locale;  // -1: AUTO
+  int xbox;
+};
+constexpr Language kLanguages[] = {
+    {"AUTO", -1, 0},       {"ENGLISH", 0, 1},  {"FRENCH", 1, 4},     {"GERMAN", 3, 3},
+    {"ITALIAN", 2, 6},     {"SPANISH", 4, 5},  {"SPANISH (LATAM)", 5, 5},
+    {"POLISH", 7, 1},      {"CZECH", 6, 1},    {"HUNGARIAN", 8, 1},  {"SLOVAK", 13, 1},
+    {"JAPANESE", 9, 2},    {"KOREAN", 10, 7},  {"CHINESE", 11, 8}};
+constexpr int kLanguageCount = int(sizeof(kLanguages) / sizeof(kLanguages[0]));
+
+// kLanguages' row for a text folder's number (AUTO for none of them).
+int LanguageIndex(int locale) {
+  for (int i = 1; i < kLanguageCount; ++i)
+    if (kLanguages[i].locale == locale) return i;
+  return 0;
+}
+
+// The PS5's language as kLanguages' row; English for one the game doesn't have.
+int SystemLanguage() {
+  int v = 1;  // (English, US)
+  if (sceSystemServiceParamGetInt(1 /* SCE_SYSTEM_SERVICE_PARAM_ID_LANG */, &v) != 0) v = 1;
+  switch (v) {
+    case 0: return LanguageIndex(9);             // Japanese
+    case 2: case 22: return LanguageIndex(1);    // French, French (Canada)
+    case 3: return LanguageIndex(4);             // Spanish
+    case 20: return LanguageIndex(5);            // Spanish (Latin America)
+    case 4: return LanguageIndex(3);             // German
+    case 5: return LanguageIndex(2);             // Italian
+    case 9: return LanguageIndex(10);            // Korean
+    case 10: case 11: return LanguageIndex(11);  // Chinese (traditional, simplified)
+    case 16: return LanguageIndex(7);            // Polish
+    case 23: return LanguageIndex(6);            // Czech
+    case 24: return LanguageIndex(8);            // Hungarian
+    default: return LanguageIndex(0);
+  }
+}
+
 struct Settings {
-  int fps = 60;          // crackdown_frame_rate: 60 (the title's variable step) or 30 (locked)
+  int language = 0;      // kLanguages: AUTO, or the text folder the game is given (crackdown_locale)
+  int fps = 60;        // crackdown_frame_rate: 60 (the title's variable step) or 30 (locked)
   bool fxaa = false;     // swap_post_effect: none or fxaa
   int filter = 3;        // anisotropic_override 2..5: 2x, 4x, 8x, 16x
   bool lane = true;      // the GPU's second lane (crackdown_gpu_lane)
@@ -160,6 +205,7 @@ struct Settings {
         int value = 0;
         if (std::sscanf(line, " %63[a-z_] = %d", key, &value) != 2) continue;
         const std::string k(key);
+        if (k == "game_language") s.language = LanguageIndex(value);
         if (k == "frame_rate") s.fps = value == 30 ? 30 : 60;
         if (k == "fxaa") s.fxaa = value != 0;
         if (k == "texture_filtering") s.filter = std::clamp(value, 2, 5);
@@ -174,8 +220,9 @@ struct Settings {
 
   void Save(const fs::path& app) const {
     if (std::FILE* f = std::fopen((app / "menu.ini").string().c_str(), "wb")) {
-      std::fprintf(f, "frame_rate = %d\nfxaa = %d\ntexture_filtering = %d\ngpu_lane = %d\nmemory_refresh = %d\n"
-                   "menu_music = %d\n", fps, fxaa ? 1 : 0, filter, lane ? 1 : 0, refresh ? 1 : 0, music);
+      std::fprintf(f, "game_language = %d\nframe_rate = %d\nfxaa = %d\ntexture_filtering = %d\ngpu_lane = %d\n"
+                   "memory_refresh = %d\nmenu_music = %d\n", kLanguages[language].locale, fps, fxaa ? 1 : 0, filter,
+                   lane ? 1 : 0, refresh ? 1 : 0, music);
       std::fclose(f);
     }
   }
@@ -192,8 +239,12 @@ struct Settings {
     // (off: the pages the GPU read stay valid until the game writes them - as Xenia's own default; on,
     // every one of them was copied again each frame, 93% of them unchanged in crackdown_003.log)
     rex::cvar::SetFlagByName("clear_memory_page_state", refresh ? "true" : "false");
-    REXLOG_INFO("Crackdown menu: {} fps, anti-aliasing {}, texture filtering {}, the GPU's second lane {}, "
-                "memory refresh {}", fps, fxaa ? "FXAA" : "off", kFilterNames[filter], lane ? "on" : "off",
+    const Language& l = kLanguages[language ? language : SystemLanguage()];
+    rex::cvar::SetFlagByName("crackdown_locale", std::to_string(l.locale));
+    rex::cvar::SetFlagByName("user_language", std::to_string(l.xbox));
+    REXLOG_INFO("Crackdown menu: language {}{} (text folder {}, Xbox 360 language {}), {} fps, anti-aliasing {}, "
+                "texture filtering {}, the GPU's second lane {}, memory refresh {}", l.name,
+                language ? "" : " (AUTO)", l.locale, l.xbox, fps, fxaa ? "FXAA" : "off", kFilterNames[filter], lane ? "on" : "off",
                 refresh ? "every frame" : "off");
   }
 };
@@ -320,7 +371,7 @@ class MenuDialog final : public rex::ui::ImGuiDialog {
   }
 
  private:
-  enum SettingsRow { kFrameRate, kAntiAliasing, kFiltering, kLane, kRefresh, kMusic, kSettingsRows };
+  enum SettingsRow { kLanguageRow, kFrameRate, kAntiAliasing, kFiltering, kLane, kRefresh, kMusic, kSettingsRows };
 
   // ---- the installer (cd_install.h) ----
 
@@ -473,6 +524,8 @@ class MenuDialog final : public rex::ui::ImGuiDialog {
         if (p & kUp) row_ = (row_ + kSettingsRows - 1) % kSettingsRows;
         if (p & kDown) row_ = (row_ + 1) % kSettingsRows;
         const int step = (p & kRight) ? 1 : (p & kLeft) ? -1 : 0;
+        if (row_ == kLanguageRow)
+          settings_.language = (settings_.language + ((p & kCross) ? 1 : step) + kLanguageCount) % kLanguageCount;
         if (row_ == kFrameRate && (step || (p & kCross))) settings_.fps = settings_.fps == 60 ? 30 : 60;
         if (row_ == kAntiAliasing && (step || (p & kCross))) settings_.fxaa = !settings_.fxaa;
         if (row_ == kFiltering) {
@@ -965,6 +1018,11 @@ class MenuDialog final : public rex::ui::ImGuiDialog {
       std::string value;
       const char* help;
     } lines[kSettingsRows] = {
+        {"LANGUAGE",
+         settings_.language ? kLanguages[settings_.language].name
+                            : std::string("AUTO (") + kLanguages[SystemLanguage()].name + ")",
+         "The game's text and menus. AUTO follows the PS5's own language, or English when the game doesn't "
+         "have it. Takes effect when you PLAY."},
         {"FRAME RATE", settings_.fps == 60 ? "60 FPS" : "30 FPS (LOCKED)",
          "60 runs the game as fast as the PS5 can, up to 60 frames a second. 30 locks it to the Xbox 360's "
          "own rate: lower, but steady in the busiest fights."},

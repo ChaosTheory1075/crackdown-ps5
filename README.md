@@ -13,6 +13,7 @@ An unofficial fan project, not affiliated with or endorsed by Microsoft, Realtim
 - Crackdown with Title Update 6, recompiled to run natively on the PS5 (not emulated)
 - 60 FPS frame pacing, with a 30 FPS mode
 - FXAA and anisotropic filtering (2x to 16x)
+- Every language on the disc: English, French, German, Italian, Spanish (Spain and Latin America), Polish, Czech, Hungarian, Slovak, Japanese, Korean and Chinese, or the PS5's own
 - Both DLC packs: the Free-For-All Pack and the Four-Play Pack
 - The game's achievements as PS5-style trophies, with their own page in the menu
 - Installs the game, Title Update 6 and the DLC from your own files, at the drive's full speed

@@ -15,6 +15,7 @@ set(CD_APP_SOURCES
     src/save_load_ps5.cpp
     src/audio_sync_ps5.cpp
     src/core_layout_ps5.cpp
+    src/locale_ps5.cpp
 )
 
 if(PS5)

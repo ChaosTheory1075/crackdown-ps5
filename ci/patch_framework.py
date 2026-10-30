@@ -76,6 +76,33 @@ def main():
          "endif()\n"
          "if(PS5)\n")
 
+    # XGetLanguage, which Crackdown asks its language from, always said English:
+    # it says the user_language cvar now (the menu's LANGUAGE), as XCONFIG does.
+    info = sdk / "src" / "kernel" / "xam" / "xam_info.cpp"
+    edit(info, "#include <rex/cvar.h>\n", "#include <rex/cvar.h>\n#include <rex/system/flags.h>\n")
+    edit(info,
+         "u32 XGetLanguage_entry() {\n"
+         "  auto desired_language = XLanguage::kEnglish;\n"
+         "\n"
+         "  // Switch the language based on game region.\n"
+         "  // TODO(benvanik): pull from xex header.\n"
+         "  uint32_t game_region = XEX_REGION_NTSCU;\n"
+         "  if (game_region & XEX_REGION_NTSCU) {\n"
+         "    desired_language = XLanguage::kEnglish;\n"
+         "  } else if (game_region & XEX_REGION_NTSCJ) {\n"
+         "    desired_language = XLanguage::kJapanese;\n"
+         "  }\n"
+         "  // Add more overrides?\n"
+         "\n"
+         "  return uint32_t(desired_language);\n"
+         "}\n",
+         "u32 XGetLanguage_entry() {\n"
+         "  // [crackdown] the console's language, as XCONFIG_USER_LANGUAGE has it\n"
+         "  const uint32_t language = REXCVAR_GET(user_language);\n"
+         "  return language && language < uint32_t(XLanguage::kMaxLanguages) ? language\n"
+         "                                                                    : uint32_t(XLanguage::kEnglish);\n"
+         "}\n")
+
 
 if __name__ == "__main__":
     main()
