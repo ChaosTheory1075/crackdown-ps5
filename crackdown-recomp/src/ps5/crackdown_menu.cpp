@@ -20,6 +20,7 @@
 #include <vector>
 
 #include <rex/cvar.h>
+#include <rex/input/sony_feedback.h>
 #include <rex/logging.h>
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/imgui_drawer.h>
@@ -193,8 +194,13 @@ struct Settings {
   bool lane = true;      // the GPU's second lane (crackdown_gpu_lane)
   bool refresh = false;  // clear_memory_page_state: every page re-read from the game each frame
   int music = 60;        // the menu song's level, 0..100
+  bool ps_buttons = true;   // crackdown_ps_buttons: PlayStation button prompts (cd_glyphs.h)
+  bool dualsense = true;    // the light bar, adaptive triggers and added rumble (dualsense_ps5.cpp)
+  int counter = 0;          // crackdown_fps_counter: 0 off, 1 simple, 2 detailed (cd_overlay.h)
+  bool skip_intro = true;   // crackdown_skip_intro: straight to the title screen
 
   static constexpr const char* kFilterNames[] = {"", "", "2X", "4X", "8X", "16X"};
+  static constexpr const char* kCounterModes[] = {"off", "simple", "detailed"};
 
   static Settings Load(const fs::path& app) {
     Settings s;
@@ -212,6 +218,10 @@ struct Settings {
         if (k == "menu_music") s.music = std::clamp(value, 0, 100);
         if (k == "gpu_lane") s.lane = value != 0;
         if (k == "memory_refresh") s.refresh = value != 0;
+        if (k == "ps_buttons") s.ps_buttons = value != 0;
+        if (k == "dualsense") s.dualsense = value != 0;
+        if (k == "fps_counter") s.counter = std::clamp(value, 0, 2);
+        if (k == "skip_intro") s.skip_intro = value != 0;
       }
       std::fclose(f);
     }
@@ -221,8 +231,10 @@ struct Settings {
   void Save(const fs::path& app) const {
     if (std::FILE* f = std::fopen((app / "menu.ini").string().c_str(), "wb")) {
       std::fprintf(f, "game_language = %d\nframe_rate = %d\nfxaa = %d\ntexture_filtering = %d\ngpu_lane = %d\n"
-                   "memory_refresh = %d\nmenu_music = %d\n", kLanguages[language].locale, fps, fxaa ? 1 : 0, filter,
-                   lane ? 1 : 0, refresh ? 1 : 0, music);
+                   "memory_refresh = %d\nmenu_music = %d\nps_buttons = %d\ndualsense = %d\nfps_counter = %d\n"
+                   "skip_intro = %d\n",
+                   kLanguages[language].locale, fps, fxaa ? 1 : 0, filter, lane ? 1 : 0, refresh ? 1 : 0, music,
+                   ps_buttons ? 1 : 0, dualsense ? 1 : 0, counter, skip_intro ? 1 : 0);
       std::fclose(f);
     }
   }
@@ -242,6 +254,13 @@ struct Settings {
     const Language& l = kLanguages[language ? language : SystemLanguage()];
     rex::cvar::SetFlagByName("crackdown_locale", std::to_string(l.locale));
     rex::cvar::SetFlagByName("user_language", std::to_string(l.xbox));
+    rex::cvar::SetFlagByName("crackdown_ps_buttons", ps_buttons ? "true" : "false");
+    rex::input::sony::SetFeaturesEnabled(dualsense);
+    rex::cvar::SetFlagByName("crackdown_fps_counter", kCounterModes[counter]);
+    rex::cvar::SetFlagByName("crackdown_skip_intro", skip_intro ? "true" : "false");
+    REXLOG_INFO("Crackdown menu: {} button prompts, DualSense features {}, FPS counter {}, skip intro {}",
+                ps_buttons ? "PlayStation" : "Xbox", dualsense ? "on" : "off", kCounterModes[counter],
+                skip_intro ? "on" : "off");
     REXLOG_INFO("Crackdown menu: language {}{} (text folder {}, Xbox 360 language {}), {} fps, anti-aliasing {}, "
                 "texture filtering {}, the GPU's second lane {}, memory refresh {}", l.name,
                 language ? "" : " (AUTO)", l.locale, l.xbox, fps, fxaa ? "FXAA" : "off", kFilterNames[filter], lane ? "on" : "off",
@@ -371,7 +390,10 @@ class MenuDialog final : public rex::ui::ImGuiDialog {
   }
 
  private:
-  enum SettingsRow { kLanguageRow, kFrameRate, kAntiAliasing, kFiltering, kLane, kRefresh, kMusic, kSettingsRows };
+  enum SettingsRow {
+    kLanguageRow, kButtons, kDualSense, kCounter, kSkipIntro, kFrameRate, kAntiAliasing, kFiltering, kLane,
+    kRefresh, kMusic, kSettingsRows
+  };
 
   // ---- the installer (cd_install.h) ----
 
@@ -526,6 +548,10 @@ class MenuDialog final : public rex::ui::ImGuiDialog {
         const int step = (p & kRight) ? 1 : (p & kLeft) ? -1 : 0;
         if (row_ == kLanguageRow)
           settings_.language = (settings_.language + ((p & kCross) ? 1 : step) + kLanguageCount) % kLanguageCount;
+        if (row_ == kButtons && (step || (p & kCross))) settings_.ps_buttons = !settings_.ps_buttons;
+        if (row_ == kDualSense && (step || (p & kCross))) settings_.dualsense = !settings_.dualsense;
+        if (row_ == kCounter) settings_.counter = (settings_.counter + ((p & kCross) ? 1 : step) + 3) % 3;
+        if (row_ == kSkipIntro && (step || (p & kCross))) settings_.skip_intro = !settings_.skip_intro;
         if (row_ == kFrameRate && (step || (p & kCross))) settings_.fps = settings_.fps == 60 ? 30 : 60;
         if (row_ == kAntiAliasing && (step || (p & kCross))) settings_.fxaa = !settings_.fxaa;
         if (row_ == kFiltering) {
@@ -1023,6 +1049,19 @@ class MenuDialog final : public rex::ui::ImGuiDialog {
                             : std::string("AUTO (") + kLanguages[SystemLanguage()].name + ")",
          "The game's text and menus. AUTO follows the PS5's own language, or English when the game doesn't "
          "have it. Takes effect when you PLAY."},
+        {"BUTTON PROMPTS", settings_.ps_buttons ? "PLAYSTATION" : "XBOX 360",
+         "The buttons the game shows in its prompts and menus: the DualSense's, or the Xbox 360's it was made "
+         "with. The first start in a language builds its font, which takes a few seconds."},
+        {"DUALSENSE", settings_.dualsense ? "ON" : "OFF",
+         "The light bar in the Agency's green, red when you're hit; adaptive triggers that push back like "
+         "pedals when you drive and like a trigger when you shoot; a kick with each shot and hit. The game's "
+         "own rumble stays either way."},
+        {"FPS COUNTER",
+         settings_.counter == 2 ? "DETAILED" : settings_.counter == 1 ? "SIMPLE" : "OFF",
+         "The frame rate while you play, at the top left of the screen. Detailed adds the slowest frames "
+         "and a graph of the last two seconds."},
+        {"SKIP INTRO", settings_.skip_intro ? "ON" : "OFF",
+         "Straight to the title screen, past the logos and the opening movie."},
         {"FRAME RATE", settings_.fps == 60 ? "60 FPS" : "30 FPS (LOCKED)",
          "60 runs the game as fast as the PS5 can, up to 60 frames a second. 30 locks it to the Xbox 360's "
          "own rate: lower, but steady in the busiest fights."},
@@ -1043,9 +1082,9 @@ class MenuDialog final : public rex::ui::ImGuiDialog {
     };
     for (int r = 0; r < kSettingsRows; ++r) {
       const bool sel = r == row_;
-      const float fs = 40 * u;
+      const float fs = 36 * u;
       if (sel) {
-        dl->AddRectFilled(ImVec2(left - 30 * u, y + 8 * u), ImVec2(left - 20 * u, y + fs), P(kGreen));
+        dl->AddRectFilled(ImVec2(left - 30 * u, y + 7 * u), ImVec2(left - 20 * u, y + fs), P(kGreen));
       }
       dl->AddText(g_item, fs, ImVec2(left, y), P(sel ? kWhite : kGrey), lines[r].label);
       const std::string v = r == kMusic ? lines[r].value : "<  " + lines[r].value + "  >";
@@ -1056,7 +1095,7 @@ class MenuDialog final : public rex::ui::ImGuiDialog {
         dl->AddRectFilled(ImVec2(x0, yy - 3 * u), ImVec2(x0 + w * settings_.music / 100.0f, yy + 3 * u),
                           P(sel ? kGreen : kGrey));
       }
-      y += fs + 26 * u;
+      y += fs + 20 * u;
     }
     // the focused row's help, at the right
     const float px = 1060 * u + page_dx_, pw = 720 * u;

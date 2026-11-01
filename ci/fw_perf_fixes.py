@@ -1818,8 +1818,11 @@ edit("src/graphics/vulkan/command_processor.cpp", """                           
 """, """                                       uint32_t frontbuffer_height) {
   SCOPE_profile_cpu_f("gpu");
   GpuLane::Get().FrameEnded();  // [crackdown] (the frame rate, in the log every 10 s)
+  rex::frame_stats::NotePresent();  // [crackdown] (the menu's FPS COUNTER)
   if (shared_memory_ && REXCVAR_GET(gpu_stale_check_pages_per_frame) > 0) {
 """)
+edit("src/graphics/vulkan/command_processor.cpp", "#include <iterator>\n",
+     "#include <iterator>\n\n#include <rex/frame_stats.h>  // [crackdown]\n")
 # Its CPU: 4 (5 empty), left alone by the core layout, which keeps the other threads on 6-12.
 edit("src/core/ps5_diag.cpp", """    if (!std::strcmp(e.what, "worker") || !std::strcmp(e.what, "recorder")) continue;
 """, """    if (!std::strcmp(e.what, "worker") || !std::strcmp(e.what, "recorder") || !std::strcmp(e.what, "gpu lane"))
@@ -2003,3 +2006,133 @@ edit("src/graphics/shared_memory.cpp", """    const uint64_t hash =
     page_hashes_[page] = hash ? hash : 1;
   }""")
 print("gpu: occlusion results invalidated where they're read, no unknown-register debug line, upload counters")
+
+# Every draw asked IsReadbackMemexportEnabled before it looked for memexports: a cvar lookup by name
+# (the cvar registry's lock and a string hash), which crackdown_020.log's gameplay profile put at
+# about 3% of the GPU command thread. Only a draw with memexports asks now.
+edit("src/graphics/vulkan/command_processor.cpp", """  if (IsReadbackMemexportEnabled(REXCVAR_GET(vulkan_readback_memexport)) &&
+      !memexport_ranges_.empty()) {""", """  if (!memexport_ranges_.empty() &&  // [crackdown] (the cvar lookup only for a draw that has them)
+      IsReadbackMemexportEnabled(REXCVAR_GET(vulkan_readback_memexport))) {""")
+
+# Predicated tiling, counted. 720p with the game's MSAA doesn't fit the 360's 10 MB of EDRAM, so
+# D3D replays a frame's commands once per screen tile (SET_BIN_SELECT picks the tile, predicated
+# packets run only in the tiles their SET_BIN_MASK names). crackdown_020.log had up to 14,500
+# draws a frame with the GPU command thread busy all the time: the frame rate line says how many
+# tiles a frame had and how many draws ran in each.
+edit("include/rex/graphics/gpu_lane.h", """  std::atomic<uint64_t> invalidated_by_writes{0}, invalidated_by_checks{0}, pages_hashed{0},
+      pages_unchanged{0};""", """  std::atomic<uint64_t> invalidated_by_writes{0}, invalidated_by_checks{0}, pages_hashed{0},
+      pages_unchanged{0};
+  // [crackdown] Predicated tiling (GPU command thread only): draws, predicated draws run and
+  // skipped, bin selects, and the tiles (bin select bits) seen since the last report.
+  uint64_t tiling_draws = 0, tiling_predicated_run = 0, tiling_predicated_skipped = 0, tiling_selects = 0,
+           tiling_frames_tiled = 0, tiling_tiles = 0, tiling_frame_bins = 0;
+  void NoteBinSelect(uint64_t select) {
+    ++tiling_selects;
+    tiling_frame_bins |= select;
+  }""")
+edit("include/rex/graphics/gpu_lane.h", """        hashed / frames, hashed ? unchanged * 100 / hashed : 0);
+    reported_jobs_ = pushed_;""", """        hashed / frames, hashed ? unchanged * 100 / hashed : 0);
+    REXGPU_INFO(
+        "gpu tiling: {} draws a frame ({} predicated run, {} skipped), {} bin selects a frame, {} of {} "
+        "frames tiled, {:.1f} tiles a tiled frame",
+        tiling_draws / frames, tiling_predicated_run / frames, tiling_predicated_skipped / frames,
+        tiling_selects / frames, tiling_frames_tiled, frames,
+        tiling_frames_tiled ? double(tiling_tiles) / double(tiling_frames_tiled) : 0.0);
+    tiling_draws = tiling_predicated_run = tiling_predicated_skipped = tiling_selects = 0;
+    tiling_frames_tiled = tiling_tiles = 0;
+    reported_jobs_ = pushed_;""")
+edit("include/rex/graphics/gpu_lane.h", """  void FrameEnded() {
+    const auto now = std::chrono::steady_clock::now();""", """  void FrameEnded() {
+    // [crackdown] (a frame whose commands selected more than one bin was drawn in tiles)
+    if (const int bins = __builtin_popcountll(tiling_frame_bins); bins > 1) {
+      ++tiling_frames_tiled;
+      tiling_tiles += uint64_t(bins);
+    }
+    tiling_frame_bins = 0;
+    const auto now = std::chrono::steady_clock::now();""")
+edit("src/graphics/command_processor.cpp", """  if (packet & 1) {
+    bool any_pass = (bin_select_ & bin_mask_) != 0;""", """  // [crackdown] (counted for the frame rate line's tiling figures)
+  const bool tiling_draw = opcode == PM4_DRAW_INDX || opcode == PM4_DRAW_INDX_2;
+  if (tiling_draw) {
+    ++GpuLane::Get().tiling_draws;
+    if (packet & 1) {
+      ++((bin_select_ & bin_mask_) != 0 ? GpuLane::Get().tiling_predicated_run
+                                         : GpuLane::Get().tiling_predicated_skipped);
+    }
+  }
+  if (packet & 1) {
+    bool any_pass = (bin_select_ & bin_mask_) != 0;""")
+for old in ("      bin_select_ = (bin_select_ & 0xFFFFFFFF00000000ull) | value;\n",
+            "      bin_select_ = (bin_select_ & 0xFFFFFFFFull) | (static_cast<uint64_t>(value) << 32);\n",
+            "      bin_select_ = (val_hi << 32) | val_lo;\n"):
+    edit("src/graphics/command_processor.cpp", old, old + "      GpuLane::Get().NoteBinSelect(bin_select_);  // [crackdown]\n")
+print("gpu: memexport readback cvar only for draws with memexports; predicated tiling counted")
+
+# Tiling, take two. crackdown_021.log: ~1500 bin selects a frame, 95% of the draws predicated and
+# almost none skipped - so either each tile runs nearly every draw, or the selects aren't tiles at
+# all. Counted now: the indirect buffers run a frame, how many of those ran earlier in the same
+# frame (a scene replayed per tile runs its buffers again) and their size, and the distinct bin
+# select values a frame.
+edit("include/rex/graphics/gpu_lane.h", """  void NoteBinSelect(uint64_t select) {
+    ++tiling_selects;
+    tiling_frame_bins |= select;
+  }""", """  uint64_t ib_runs = 0, ib_repeats = 0, ib_dwords = 0, ib_repeat_dwords = 0, select_values = 0;
+  uint32_t ib_seen_[1024] = {};
+  uint64_t select_seen_[64] = {};
+  uint32_t select_seen_count_ = 0;
+  void NoteBinSelect(uint64_t select) {
+    ++tiling_selects;
+    tiling_frame_bins |= select;
+    for (uint32_t i = 0; i < select_seen_count_; ++i) {
+      if (select_seen_[i] == select) return;
+    }
+    if (select_seen_count_ < 64) select_seen_[select_seen_count_++] = select;
+  }
+  void NoteIndirectBuffer(uint32_t ptr, uint32_t count) {
+    ++ib_runs;
+    ib_dwords += count;
+    for (uint32_t i = (ptr >> 2) * 2654435761u >> 22, n = 0; n < 1024; ++n, i = (i + 1) & 1023) {
+      if (ib_seen_[i] == ptr) {
+        ++ib_repeats;
+        ib_repeat_dwords += count;
+        return;
+      }
+      if (!ib_seen_[i]) {
+        ib_seen_[i] = ptr;
+        return;
+      }
+    }
+  }""")
+edit("include/rex/graphics/gpu_lane.h", """    tiling_frame_bins = 0;
+    const auto now = std::chrono::steady_clock::now();""", """    tiling_frame_bins = 0;
+    select_values += select_seen_count_;
+    select_seen_count_ = 0;
+    std::memset(ib_seen_, 0, sizeof(ib_seen_));
+    const auto now = std::chrono::steady_clock::now();""")
+edit("include/rex/graphics/gpu_lane.h", """    tiling_draws = tiling_predicated_run = tiling_predicated_skipped = tiling_selects = 0;""", """    REXGPU_INFO(
+        "gpu command buffers: {} indirect buffers a frame ({} KB), {} of them run earlier in the same "
+        "frame ({} KB); {} distinct bin selects a frame",
+        ib_runs / frames, (ib_dwords * 4 >> 10) / frames, ib_repeats / frames,
+        (ib_repeat_dwords * 4 >> 10) / frames, select_values / frames);
+    ib_runs = ib_repeats = ib_dwords = ib_repeat_dwords = select_values = 0;
+    tiling_draws = tiling_predicated_run = tiling_predicated_skipped = tiling_selects = 0;""")
+edit("src/graphics/command_processor.cpp", """  trace_writer_.WriteIndirectBufferStart(ptr, count * sizeof(uint32_t));
+""", """  trace_writer_.WriteIndirectBufferStart(ptr, count * sizeof(uint32_t));
+  GpuLane::Get().NoteIndirectBuffer(ptr, count);  // [crackdown]
+""")
+print("gpu: indirect buffer repeats and distinct bin selects counted")
+
+# The video mode the game is told is the Xbox 360's 720p HDTV, not the PS5's display: `resolution`
+# defaults to "4k" on the PS5, so VdQueryVideoMode reported 3840x2160 while the game draws 1280x720.
+# The HUD's message panels are laid out from the video mode - the Infiltration and Execution
+# Probability bar, "You found an Agility Orb!", the subtitles all landed off screen (the PC recomp's
+# issue #20, the same bar off screen at 4K). The presenter still scales the picture to the display.
+edit("src/kernel/xboxkrnl/xboxkrnl_video.cpp", """  if (!rex::cvar::HasNonDefaultValue("video_mode_width")) {
+    if (rex::cvar::HasNonDefaultValue("window_width") && REXCVAR_GET(window_width) > 0) {""",
+     """  if (false) {  // [crackdown] (video_mode_width, 1280 unless set: not the display's size)
+    if (rex::cvar::HasNonDefaultValue("window_width") && REXCVAR_GET(window_width) > 0) {""")
+edit("src/kernel/xboxkrnl/xboxkrnl_video.cpp", """  if (!rex::cvar::HasNonDefaultValue("video_mode_height")) {
+    if (rex::cvar::HasNonDefaultValue("window_height") && REXCVAR_GET(window_height) > 0) {""",
+     """  if (false) {  // [crackdown] (video_mode_height, 720 unless set: not the display's size)
+    if (rex::cvar::HasNonDefaultValue("window_height") && REXCVAR_GET(window_height) > 0) {""")
+print("video mode: the guest is told 1280x720, not the display's size")

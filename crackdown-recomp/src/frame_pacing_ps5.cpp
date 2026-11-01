@@ -28,7 +28,11 @@
 #include <rex/system/xmemory.h>
 
 #include "audio_wave_timeout.h"
+#include <rex/platform.h>
+
 #include "character_step_fixes.h"
+#include "cheat_hooks.h"
+#include "dualsense_ps5.h"
 #include "frame_timing.h"
 #include "guest_memory.h"
 #include "vehicle_action_step.h"
@@ -176,6 +180,10 @@ void FrameLoop(PPCContext& ctx, uint8_t* base, GuestFunction original) {
   }
   BeginFrame(rate);
   if (HighFrameRate(rate)) SelectVariableStep(base, rate);
+#if REX_PLATFORM_PS5
+  crackdown::DualSenseFrame(base);
+  crackdown::cheats::RunGameTick(base);  // (a cheat just turned on refills health or ammo)
+#endif
   original(ctx, base);
 }
 

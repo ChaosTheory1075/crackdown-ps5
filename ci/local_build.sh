@@ -45,9 +45,52 @@ mkdir -p $M/config
 cp cd/config/tu6/discovered-functions.toml $M/config/
 python3 "$repo/ci/filter_overrides.py" cd/config/tu6/overrides.toml "$repo/crackdown-recomp/src/hooks_ps5.cpp" \
   "$repo/crackdown-recomp/src/frame_pacing_ps5.cpp" $M/config/overrides.toml > out/hooks.txt
+# The PS5's own Jump Height hook (cheats_ps5.cpp): right after Title Update 6's jump launch works
+# out the height (fmuls f30,f1,f31 at 0x8231EA64), before r30 is loaded.
+cat >> $M/config/overrides.toml <<'TOML'
+
+[[midasm_hook]]
+address = 0x8231EA68
+name = "crackdown_jump_height"
+registers = ["f30", "r11"]
+after_instruction = false
+TOML
 cp cd/src/massive_server_guard.h cd/src/visibility_grid_guard.h cd/src/audio_pcm_firewall.h \
   cd/src/guest_memory.h cd/src/frame_timing.h cd/src/character_step_fixes.h \
-  cd/src/vehicle_action_step.h cd/src/audio_wave_timeout.h cd/src/xaudio_barrier.h $M/src/
+  cd/src/vehicle_action_step.h cd/src/audio_wave_timeout.h cd/src/xaudio_barrier.h \
+  cd/src/font_atlas.h cd/src/font_atlas.cpp \
+  cd/src/cheats.h cd/src/cheats.cpp cd/src/cheat_hooks.h cd/src/cheat_hooks.cpp cd/src/guest_hooks.h \
+  cd/src/guest_layout.h cd/src/orb_map.h cd/src/orb_map.cpp cd/src/orb_map_rules.h cd/src/aspect_ratio.h $M/src/
+# The orb map's markers drawn with the game's frames, not every vblank (a repaint every vblank queues
+# repeats ahead of the game's frames on the PS5).
+python3 - "$M/src/orb_map.cpp" <<'PY'
+import sys
+p = sys.argv[1]
+t = open(p).read()
+old = "  explicit OrbMapOverlay(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {}\n"
+assert t.count(old) == 1, "orb_map.cpp changed"
+open(p, "w").write(t.replace(old, old + "  bool WantsContinuousRepaint() const override { return false; }  // [ps5]\n"))
+PY
+# Jump Height works on Title Update 6 here (cheats_ps5.cpp's codegen hook), so the cheat is offered.
+python3 - "$M/src/guest_layout.h" <<'PY'
+import sys
+p = sys.argv[1]
+t = open(p).read()
+old = "    .jump_height_cheat = false,\n"
+assert t.count(old) == 1, "guest_layout.h changed"
+open(p, "w").write(t.replace(old, "    .jump_height_cheat = true,  // [ps5]\n"))
+PY
+# (std::hypot is libc's hypotf, which no PS5 build has imported yet: an import the console lacks
+# stops the app from starting at all)
+python3 - "$M/src/orb_map_rules.h" <<'PY'
+import sys
+p = sys.argv[1]
+t = open(p).read()
+old = "const float distance = std::hypot(x - centre.x, z - centre.z);"
+assert t.count(old) == 1, "orb_map_rules.h changed"
+open(p, "w").write(t.replace(old, "const float distance = std::sqrt((x - centre.x) * (x - centre.x) + "
+                                  "(z - centre.z) * (z - centre.z));  // [ps5]"))
+PY
 
 echo "== rexglue CLI (host)"
 ccache -M 16G > /dev/null

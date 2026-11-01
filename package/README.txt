@@ -39,6 +39,11 @@ SAVES     BACK UP SAVES (to install/backups/), IMPORT an Xbox 360 save
           package from install/, RESTORE one of the backups.
 SETTINGS  LANGUAGE          AUTO (the PS5's language) or any of the 13 on
                             the disc.
+          BUTTON PROMPTS    PlayStation (the DualSense's buttons in the game's
+                            prompts and menus) or Xbox 360.
+          DUALSENSE         light bar, adaptive triggers and added rumble (on).
+          FPS COUNTER       off, simple or detailed, at the top left while playing.
+          SKIP INTRO        straight to the title screen (on).
           FRAME RATE        60 (as fast as the PS5 runs it) or 30 locked (steady).
           ANTI-ALIASING     off or FXAA.
           TEXTURE FILTERING 2x to 16x anisotropic.
@@ -52,18 +57,32 @@ TROPHIES  every achievement, earned ones first, with their dates (filled in
 ABOUT     the credits.
 L1 / R1 change pages, O goes back to HOME. Settings are kept in menu.ini.
 
+In game: the quick menu
+-----------------------
+Press L3 + R3 (both sticks in) while playing. Up / down picks a row, left /
+right or X changes it, O or L3 + R3 closes it.
+PLAYER      Infinite Health, Movement Speed, Jump Height, No Fall Damage
+WEAPONS     Infinite Ammo
+VEHICLE     Infinite Vehicle Health, Vehicle Speed
+MAP         Agility Orbs on Map, Hidden Orbs on Map: the ones you haven't
+            collected yet, on the minimap or on the minimap and the pause
+            menu's map.
+DISPLAY     FPS Counter;  CONTROLLER  DualSense Features.
+The cheats act only when you're playing solo. They are kept in cheats.ini.
+
 Your data (back these up before deleting or reinstalling the app!)
 ------------------------------------------------------------------
 - PPSA53070/saves/          your game saves
 - PPSA53070/UserData/       trophies (earned and their dates) and the game's cache
 - PPSA53070/menu.ini        your settings
-SAVES > BACK UP SAVES copies all three to PPSA53070/install/backups/: copy
+- PPSA53070/cheats.ini      your cheats
+SAVES > BACK UP SAVES copies the first three to PPSA53070/install/backups/: copy
 that folder off the PS5. Deleting the PPSA53070 folder deletes them too.
 
 Updating to a new build
 -----------------------
-Replace eboot.bin, payloads/, sce_sys/ and sce_module/ (and hub/ if it changed). Keep game/,
-dlc/, install/, saves/, UserData/ and menu.ini.
+Replace eboot.bin, payloads/, sce_sys/, sce_module/ and glyphs/ (and hub/ if it changed). Keep game/,
+dlc/, install/, saves/, UserData/, menu.ini and cheats.ini.
 
 Problems
 --------

@@ -94,7 +94,7 @@ cat > "$app/sce_sys/param.json" <<EOF
   "conceptId": "${title_id:4}",
   "contentBadgeType": 1,
   "contentId": "UP9000-${title_id}_00-CRACKDOWNPS50000",
-  "contentVersion": "01.001.000",
+  "contentVersion": "01.010.000",
   "downloadDataSize": 256,
   "gameIntent": { "permittedIntents": [ { "intentType": "launchActivity" } ] },
   "localizedParameters": {
@@ -115,6 +115,11 @@ python3 "$here/make_sce_art.py" "$app/sce_sys"
 if [[ -d $here/../package/app-assets ]]; then
     cp -r "$here/../package/app-assets/." "$app/"
 fi
+# The PlayStation button glyphs (tools/make_ps_button_glyphs.py; cd_glyphs.cpp builds the game's
+# font with them).
+mkdir -p "$app/glyphs"
+cp "$here/../package/glyphs/ps_button_glyphs.dds" "$here/../package/glyphs/ps_cross_40.png" \
+   "$here/../package/glyphs/ps_circle_40.png" "$app/glyphs/"
 cp "$here/../package/README.txt" "$app/README.txt"
 cp "$here/../package/game-README.txt" "$app/game/README.txt"
 cp "$here/../package/install-README.txt" "$app/install/README.txt"

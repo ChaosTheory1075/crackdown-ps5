@@ -14,3 +14,7 @@ includes = ["config/overrides.toml", "config/discovered-functions.toml"]
 # CRT setjmp/longjmp of the TU6 image.
 setjmp_address = 0x82B4B950
 longjmp_address = 0x82B4B2C0
+# skip_msr stays off. With it on (PROTOTYPE: ReEvolution's fix), the game's interrupts-off sections
+# (mtmsrd r13,1) no longer kept out the GPU interrupt callback that the runtime runs under the same
+# global lock: crackdown_017.log froze for 20 s with the main thread spinning on a GPU fence in
+# sub_82744888/sub_82745278, and it ran no faster (27-54 fps).

@@ -16,6 +16,7 @@ set(CD_APP_SOURCES
     src/audio_sync_ps5.cpp
     src/core_layout_ps5.cpp
     src/locale_ps5.cpp
+    src/skip_intro_ps5.cpp
 )
 
 if(PS5)
@@ -24,7 +25,10 @@ if(PS5)
     set(GTA4_PS5_SRC "${REXSDK_DIR}/gta4-recomp/src/ps5")
     set(CD_PS5_FONTS "${REXSDK_DIR}/../../ps5/assets/fonts")
     list(APPEND CD_APP_SOURCES src/ps5/crackdown_menu.cpp src/ps5/cd_trophies.cpp src/ps5/cd_trophies_game.cpp
-         src/ps5/cd_install.cpp
+         src/ps5/cd_install.cpp src/ps5/cd_glyphs.cpp src/ps5/cd_overlay.cpp src/dualsense_ps5.cpp
+         src/ps5/cd_quick_menu.cpp src/cheats_ps5.cpp
+         # (the PC recomp's, copied in by ci/local_build.sh)
+         src/font_atlas.cpp src/cheats.cpp src/cheat_hooks.cpp src/orb_map.cpp
          "${GTA4_PS5_SRC}/game/sound.cpp" "${GTA4_PS5_SRC}/hub/hub_sfx.cpp")
     set_source_files_properties(src/ps5/crackdown_menu.cpp PROPERTIES
         COMPILE_DEFINITIONS "CDPS5_FONTS_DIR=\"${CD_PS5_FONTS}\"")

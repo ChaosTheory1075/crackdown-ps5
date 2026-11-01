@@ -14,6 +14,10 @@ An unofficial fan project, not affiliated with or endorsed by Microsoft, Realtim
 - 60 FPS frame pacing, with a 30 FPS mode
 - FXAA and anisotropic filtering (2x to 16x)
 - Every language on the disc: English, French, German, Italian, Spanish (Spain and Latin America), Polish, Czech, Hungarian, Slovak, Japanese, Korean and Chinese, or the PS5's own
+- PlayStation button prompts in the game's text and menus (or the Xbox 360's, in SETTINGS)
+- DualSense features: the light bar in the Agency's green (red when you're hit), adaptive triggers for driving and shooting, a kick with each shot and hit
+- An FPS counter (simple or detailed) and Skip Intro
+- Cheats in an in-game quick menu (L3 + R3): infinite health, ammo and vehicle health, no fall damage, movement, jump and vehicle speed multipliers, and the agility and hidden orbs you haven't collected yet marked on the minimap and the pause map (from Crackdown Recompiled)
 - Both DLC packs: the Free-For-All Pack and the Four-Play Pack
 - The game's achievements as PS5-style trophies, with their own page in the menu
 - Installs the game, Title Update 6 and the DLC from your own files, at the drive's full speed

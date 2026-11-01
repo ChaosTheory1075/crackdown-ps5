@@ -103,6 +103,38 @@ def main():
          "                                                                    : uint32_t(XLanguage::kEnglish);\n"
          "}\n")
 
+    # Every submission's end built the whole pipeline creation queue on the GPU thread and then
+    # waited for the creation threads' pipelines in flight: with async compilation the draws that
+    # need them are recorded with a placeholder anyway. PROTOTYPE: ReEvolution's every gameplay
+    # hitch (100-650 ms in submit, each after a burst of new pipelines) was this; with async
+    # compilation the queue is left to the creation threads.
+    edit(sdk / "src" / "graphics" / "vulkan" / "pipeline_cache.cpp",
+         "    if (startup_loading) {\n"
+         "      creation_request_cond_.notify_one();\n"
+         "    } else {\n",
+         "    if (startup_loading || REXCVAR_GET(async_shader_compilation)) {  // [crackdown]\n"
+         "      creation_request_cond_.notify_one();\n"
+         "    } else {\n")
+
+    # The DualSense's light bar: a colour of the game's own (Crackdown: the Agency's green, red when
+    # hit), not only GTA IV's episode and wanted colours.
+    sony_h = sdk / "include" / "rex" / "input" / "sony_feedback.h"
+    edit(sony_h,
+         "  uint32_t player_identity = 0;\n"
+         "  uint32_t context_identity = 0;\n"
+         "};\n",
+         "  uint32_t player_identity = 0;\n"
+         "  uint32_t context_identity = 0;\n"
+         "  // [crackdown] the light bar's colour, when the game picks one\n"
+         "  bool has_color = false;\n"
+         "  std::array<uint8_t, 3> color{};\n"
+         "};\n")
+    edit(sdk / "src" / "input" / "sony_feedback.cpp",
+         "  if (slot.game.wanted > 0 && now_ms >= slot.wanted_started_ms) {\n",
+         "  if (slot.game.has_color) {  // [crackdown]\n"
+         "    output.color = slot.game.color;\n"
+         "  } else if (slot.game.wanted > 0 && now_ms >= slot.wanted_started_ms) {\n")
+
 
 if __name__ == "__main__":
     main()

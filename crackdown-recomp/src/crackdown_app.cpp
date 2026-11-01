@@ -1,7 +1,9 @@
 // Crackdown - ReXGlue recompiled app (see crackdown_app.h).
 #include "crackdown_app.h"
 
+#include <iterator>
 #include <memory>
+#include <string>
 #include <system_error>
 
 #include <rex/cvar.h>
@@ -14,13 +16,31 @@
 #include <rex/system/xam/user_profile.h>
 
 #include "crackdown_init.h"
+#include "ps5/cd_glyphs.h"
 #include "ps5/cd_install.h"
+#include "cheats_ps5.h"
+#include "orb_map.h"
+#include "ps5/cd_overlay.h"
+#include "ps5/cd_quick_menu.h"
 #include "ps5/cd_trophies_game.h"
 #include "ps5/crackdown_menu.h"
+
+REXCVAR_DECLARE(int32_t, crackdown_locale);
+REXCVAR_DEFINE_BOOL(crackdown_ps_buttons, true, "Crackdown",
+                    "PlayStation button prompts (false: the game's Xbox 360 ones)");
 
 namespace fs = std::filesystem;
 
 namespace {
+
+#if REX_PLATFORM_PS5
+// The game's text folders (game\Local), by crackdown_locale's number (locale_ps5.cpp).
+constexpr const char* kLocaleFolders[] = {"en-US", "fr-FR", "it-IT", "de-DE", "es-ES", "es-LA", "cs-CZ",
+                                          "pl-PL", "hu-HU", "ja-JP", "ko-KR", "zh-TW", "",      "sk-SK"};
+
+std::unique_ptr<cdps5::FpsOverlay> g_fps_overlay;
+std::unique_ptr<cdps5::QuickMenu> g_quick_menu;
+#endif
 
 // The app's own folder: /app0 on the PS5, beside the program elsewhere.
 fs::path AppRoot(const rex::PathConfig& defaults) {
@@ -120,6 +140,17 @@ void CrackdownApp::OnPreSetup(rex::RuntimeConfig& config) {
   // Copy back only resolves up to 256 KB (crackdown.toml's): the large ones aren't read on the CPU
   // and copying them cost most of the frame (ci/fw_perf_fixes.py adds the cvar to the fork).
   rex::cvar::SetFlagByName("readback_resolve_max_bytes", "262144");
+  // As Max Payne 3 RePrescribed and PROTOTYPE: ReEvolution: three pipeline creation threads, not
+  // 3/4 of the CPUs (a burst of new pipelines in a new district starved the game's threads), and
+  // frames with a pipeline still being built shown rather than skipped.
+  if (!rex::cvar::HasNonDefaultValue("vulkan_pipeline_creation_threads"))
+    rex::cvar::SetLaunchFlag("vulkan_pipeline_creation_threads", "3");
+  rex::cvar::SetLaunchFlag("vulkan_async_skip_incomplete_frames", "false");
+  // No stall reports: they stop every thread with SIGPROF to log where it is, as soon as no frame has
+  // come for 300 ms - every load, now that the frames are counted (rex::frame_stats, for the FPS
+  // counter). Both freezes on loading (crackdown_017, crackdown_019) began right after one: the game's
+  // own waits interrupted mid-way, its threads ended up waiting on each other.
+  if (!rex::cvar::HasNonDefaultValue("ps5_hang_reports")) rex::cvar::SetLaunchFlag("ps5_hang_reports", "false");
 }
 
 void CrackdownApp::OnPostSetup() {
@@ -133,6 +164,25 @@ void CrackdownApp::OnPostSetup() {
   // Saves imported from the menu, into the runtime's profile (made on its first start).
   if (auto* ks = runtime()->kernel_state(); ks && ks->user_profile() && ks->user_profile()->xuid())
     cdps5::install::AdoptImportedSaves(fs::path("/app0/saves"), ks->user_profile()->xuid());
+  // The button prompts: PlayStation ones in the language's font and the two menus with pictures
+  // of their own (ps5/cd_glyphs.h), or the game's Xbox 360 ones.
+  {
+    const bool playstation = REXCVAR_GET(crackdown_ps_buttons);
+    const int32_t locale = REXCVAR_GET(crackdown_locale);
+    const char* folder = locale >= 0 && locale < int32_t(std::size(kLocaleFolders)) && *kLocaleFolders[locale]
+                             ? kLocaleFolders[locale]
+                             : "en-US";
+    if (playstation)
+      cdps5::glyphs::InstallFont(runtime()->file_system(), fs::path("/app0/game"), runtime()->user_data_root(),
+                                 folder);
+    cdps5::glyphs::SetMenuPictures(fs::path("/app0/game"), playstation);
+  }
+  // What's drawn over the game: the frame rate counter (drawing nothing while it's off, so the quick
+  // menu can turn it on), the cheats' orb markers and the quick menu (L3 + R3), the cheats as saved.
+  crackdown::cheats_ps5::Load("/app0/cheats.ini");
+  g_fps_overlay = std::make_unique<cdps5::FpsOverlay>(imgui_drawer());
+  crackdown::orb_map::CreateOverlay(imgui_drawer());
+  g_quick_menu = std::make_unique<cdps5::QuickMenu>(imgui_drawer());
 #endif
   const fs::path host_path = runtime()->user_data_root() / "4D5307DC" / "cache";
   std::error_code ec;
