@@ -1,0 +1,31 @@
+From 87c1739e156c519ef83001afb4992c69b90d6910 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:38 -0500
+Subject: [PATCH 096/122] 
+ 0957-kernelbase-fall-back-to-the-stored-computer-name.patch
+
+---
+ dlls/kernelbase/registry.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/kernelbase/registry.c b/dlls/kernelbase/registry.c
+index eae5b56..f3c20d5 100644
+--- a/dlls/kernelbase/registry.c
++++ b/dlls/kernelbase/registry.c
+@@ -3360,7 +3360,12 @@ BOOL WINAPI GetComputerNameExW( COMPUTER_NAME_FORMAT type, WCHAR *name, DWORD *l
+         return FALSE;
+     }
+ 
+-    if (!(ret = RegOpenKeyExW( HKEY_LOCAL_MACHINE, keyname, 0, KEY_READ, &key )))
++    ret = RegOpenKeyExW( HKEY_LOCAL_MACHINE, keyname, 0, KEY_READ, &key );
++    /* ActiveComputerName is volatile and only wineboot creates it. */
++    if (ret && (type == ComputerNameNetBIOS || type == ComputerNamePhysicalNetBIOS))
++        ret = RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Control\\ComputerName\\ComputerName",
++                             0, KEY_READ, &key );
++    if (!ret)
+     {
+         DWORD size = *len * sizeof(WCHAR);
+         ret = RegQueryValueExW( key, valuename, NULL, NULL, (BYTE *)name, &size );
+-- 
+2.43.0
+

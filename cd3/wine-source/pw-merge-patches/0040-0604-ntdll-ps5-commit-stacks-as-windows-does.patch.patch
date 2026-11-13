@@ -1,0 +1,264 @@
+From b6307226f329ea7ba32c842fb118bc17e754ba47 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:35 -0500
+Subject: [PATCH 040/122] 0604-ntdll-ps5-commit-stacks-as-windows-does.patch
+
+---
+ dlls/ntdll/thread.c       | 59 +++++++++++++++++++++++++-
+ dlls/ntdll/unix/virtual.c | 89 ++++++++++++++++++++++++++++++++++++---
+ 2 files changed, 141 insertions(+), 7 deletions(-)
+
+diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+index a016a02..e49db7b 100644
+--- a/dlls/ntdll/thread.c
++++ b/dlls/ntdll/thread.c
+@@ -303,6 +303,35 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, SECURITY_DESCRIPTOR *descr,
+ }
+ 
+ 
++/**********************************************************************
++ *           stack_commit_granule
++ *
++ * The host page a fiber stack commits and guards in when it commits what
++ * Windows commits and grows through its guard page, as the Unix side lays
++ * out thread stacks where host pages are larger than Windows pages; 0 to
++ * commit the whole stack. In a PS5 title (WINE_PS5_NTDLL_DIR) every
++ * committed page is direct memory at once, and host pages are 16 KiB; on a
++ * PC, WINE_HOST_PAGE_SIZE keeps larger host pages to run that scheme.
++ */
++static SIZE_T stack_commit_granule(void)
++{
++    static SIZE_T granule = ~(SIZE_T)0;
++    WCHAR value[16];
++    SIZE_T len, size = 0;
++
++    if (granule != ~(SIZE_T)0) return granule;
++    if (!RtlQueryEnvironmentVariable( NULL, L"WINE_HOST_PAGE_SIZE", 19, value, ARRAY_SIZE(value) - 1, &len ))
++    {
++        value[len] = 0;
++        size = wcstoul( value, NULL, 0 );
++        if (size <= page_size || size > 0x10000 || (size & (size - 1))) size = 0;
++    }
++    else if (RtlQueryEnvironmentVariable( NULL, L"WINE_PS5_NTDLL_DIR", 18, value, 0, &len ) != STATUS_VARIABLE_NOT_FOUND)
++        size = 0x4000;
++    return granule = size;
++}
++
++
+ /**********************************************************************
+  *           RtlCreateUserStack (NTDLL.@)
+  */
+@@ -310,6 +339,7 @@ NTSTATUS WINAPI RtlCreateUserStack( SIZE_T commit, SIZE_T reserve, ULONG zero_bi
+                                     SIZE_T commit_align, SIZE_T reserve_align, INITIAL_TEB *stack )
+ {
+     PROCESS_STACK_ALLOCATION_INFORMATION alloc;
++    SIZE_T granule = stack_commit_granule(), top = 0;
+     NTSTATUS status;
+ 
+     TRACE("commit %#Ix, reserve %#Ix, zero_bits %lu, commit_align %#Ix, reserve_align %#Ix, stack %p\n",
+@@ -336,7 +366,34 @@ NTSTATUS WINAPI RtlCreateUserStack( SIZE_T commit, SIZE_T reserve, ULONG zero_bi
+     alloc.ZeroBits = zero_bits;
+     status = NtSetInformationProcess( GetCurrentProcess(), ProcessThreadStackAllocation,
+                                       &alloc, sizeof(alloc) );
+-    if (!status)
++    if (granule) top = max( (commit + granule - 1) & ~(granule - 1), granule );
++    if (!status && top && top + 2 * granule <= reserve)
++    {
++        /* the top of the stack and a guard page under it, in host pages, over
++         * the no-access page; the rest is committed as the stack grows
++         * through the guard page */
++        char *base = (char *)alloc.StackBase + reserve;
++        SIZE_T size = top;
++        void *addr = base - top;
++
++        status = NtAllocateVirtualMemory( GetCurrentProcess(), &addr, 0, &size, MEM_COMMIT, PAGE_READWRITE );
++        addr = base - top - granule;
++        size = granule;
++        if (!status)
++            status = NtAllocateVirtualMemory( GetCurrentProcess(), &addr, 0, &size, MEM_COMMIT,
++                                              PAGE_READWRITE | PAGE_GUARD );
++        if (status)
++        {
++            RtlFreeUserStack( alloc.StackBase );
++            return status;
++        }
++        stack->OldStackBase = 0;
++        stack->OldStackLimit = 0;
++        stack->DeallocationStack = alloc.StackBase;
++        stack->StackBase = base;
++        stack->StackLimit = base - top;
++    }
++    else if (!status)
+     {
+         void *addr;
+         SIZE_T size = page_size;
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 52f6c38..a7eae72 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -4432,6 +4432,24 @@ NTSTATUS virtual_clear_tls_index( ULONG index )
+ }
+ 
+ 
++/***********************************************************************
++ *           stack_commit_on_demand
++ *
++ * Whether a thread stack commits what Windows commits, its top and a guard
++ * page under it, and grows through the guard page, rather than being
++ * committed whole. On the PS5 every committed page is direct memory at
++ * once, so a stack committed whole costs its whole reserve (1 MiB for most,
++ * of which a thread or fiber seldom touches more than a few pages), and its
++ * 16 KiB host pages make a guard page larger than any frame Wine writes under
++ * a stack pointer. A PC with 4 KiB host pages keeps committing stacks whole:
++ * there a page costs nothing until it is touched.
++ */
++static inline BOOL stack_commit_on_demand(void)
++{
++    return host_page_size > page_size;
++}
++
++
+ /***********************************************************************
+  *           virtual_alloc_thread_stack
+  */
+@@ -4441,7 +4459,7 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_low, UL
+     struct file_view *view;
+     NTSTATUS status;
+     sigset_t sigset;
+-    SIZE_T size;
++    SIZE_T size, top = 0;
+ 
+     if (!reserve_size) reserve_size = main_image_info.MaximumStackSize;
+     if (!commit_size) commit_size = main_image_info.CommittedStackSize;
+@@ -4450,9 +4468,18 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_low, UL
+     if (size < 1024 * 1024) size = 1024 * 1024;  /* Xlib needs a large stack */
+     size = ROUND_SIZE( 0, size, granularity_mask );
+ 
++    /* Commit the top of the stack in host pages, with a guard page under it
++     * and the no-access page at the bottom; a caller that commits all it
++     * reserves (the WoW64 CPU's 64-bit stack) gets the whole stack. */
++    if (guard_page && stack_commit_on_demand() && commit_size < reserve_size)
++    {
++        top = ROUND_SIZE( 0, max( commit_size, 1 ), host_page_mask );
++        if (top + 2 * host_page_size > size) top = 0;
++    }
++
+     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+ 
+-    status = map_view( &view, NULL, size, 0, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED,
++    status = map_view( &view, NULL, size, 0, VPROT_READ | VPROT_WRITE | (top ? 0 : VPROT_COMMITTED),
+                        limit_low, limit_high, 0 );
+     if (status != STATUS_SUCCESS) goto done;
+ 
+@@ -4460,8 +4487,16 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_low, UL
+     VALGRIND_STACK_REGISTER( view->base, (char *)view->base + view->size );
+ #endif
+ 
++    if (top)
++    {
++        char *guard = (char *)view->base + view->size - top - host_page_size;
++
++        set_page_vprot_bits( guard, top + host_page_size, VPROT_COMMITTED, 0 );
++        set_page_vprot_bits( guard, host_page_size, VPROT_GUARD, 0 );
++        mprotect_range( guard, top + host_page_size, 0, 0 );
++    }
+     /* setup no access guard page */
+-    if (guard_page)
++    else if (guard_page)
+     {
+         set_page_vprot( view->base, host_page_size, 0 );
+         set_page_vprot( (char *)view->base + host_page_size, host_page_size,
+@@ -4475,7 +4510,8 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_low, UL
+     stack->OldStackLimit = 0;
+     stack->DeallocationStack = view->base;
+     stack->StackBase = (char *)view->base + view->size;
+-    stack->StackLimit = (char *)view->base + (guard_page ? 2 * host_page_size : 0);
++    if (top) stack->StackLimit = (char *)stack->StackBase - top;
++    else stack->StackLimit = (char *)view->base + (guard_page ? 2 * host_page_size : 0);
+ done:
+     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
+     return status;
+@@ -4631,6 +4667,41 @@ static NTSTATUS grow_thread_stack( struct thread_data *data, char *page, struct
+ }
+ 
+ 
++/***********************************************************************
++ *           is_stack_reserve
++ *
++ * Whether page is in the reserved part of the current thread's stack,
++ * under its guard page, in a stack committed on demand.
++ */
++static BOOL is_stack_reserve( struct thread_data *data, char *page, struct thread_stack_info *stack_info )
++{
++    if (!stack_commit_on_demand()) return FALSE;
++    if (get_host_page_vprot( page ) & VPROT_COMMITTED) return FALSE;
++    if ((get_page_vprot( page ) & (VPROT_READ | VPROT_WRITE)) != (VPROT_READ | VPROT_WRITE)) return FALSE;
++    if (!is_inside_thread_stack( data, page, stack_info )) return FALSE;
++    return page >= stack_info->start + host_page_size && page < stack_info->limit;
++}
++
++
++/***********************************************************************
++ *           grow_thread_stack_to
++ *
++ * Grows a stack committed on demand to a page under its guard page that was
++ * touched first. Wine writes some of its own frames on a thread's stack
++ * from their low end, past the guard page: a new thread clears the 60 KiB
++ * under its initial context (signal_start_thread), and a user callback's
++ * arguments can be larger than a guard page (a WM_GETTEXT buffer).
++ * Everything up to the stack limit is committed, as the guard pages in
++ * between would have been.
++ */
++static NTSTATUS grow_thread_stack_to( struct thread_data *data, char *page, struct thread_stack_info *stack_info )
++{
++    set_page_vprot_bits( page, stack_info->limit - page, VPROT_COMMITTED, VPROT_GUARD );
++    mprotect_range( page, stack_info->limit - page, 0, 0 );
++    return grow_thread_stack( data, page, stack_info );
++}
++
++
+ /***********************************************************************
+  *           virtual_handle_fault
+  */
+@@ -4640,6 +4711,7 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec,
+     ULONG_PTR err = rec->ExceptionInformation[0];
+     void *addr = (void *)rec->ExceptionInformation[1];
+     char *page = ROUND_ADDR( addr, host_page_mask );
++    struct thread_stack_info stack_info;
+     BYTE vprot;
+ 
+     mutex_lock( &virtual_mutex );  /* no need for signal masking inside signal handler */
+@@ -4657,7 +4729,6 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec,
+ 
+     if (!is_inside_signal_stack( data, stack ) && (vprot & VPROT_GUARD))
+     {
+-        struct thread_stack_info stack_info;
+         if (!is_inside_thread_stack( data, page, &stack_info ))
+         {
+             set_page_vprot_bits( page, host_page_size, 0, VPROT_GUARD );
+@@ -4666,6 +4737,8 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec,
+         }
+         else ret = grow_thread_stack( data, page, &stack_info );
+     }
++    else if (!is_inside_signal_stack( data, stack ) && is_stack_reserve( data, page, &stack_info ))
++        ret = grow_thread_stack_to( data, page, &stack_info );
+     else if (err == EXCEPTION_WRITE_FAULT)
+     {
+         if (vprot & VPROT_WRITEWATCH)
+@@ -4730,8 +4803,12 @@ void *virtual_setup_exception( struct thread_data *data, void *stack_ptr, size_t
+     else if (stack < stack_info.limit)
+     {
+         char *page = ROUND_ADDR( stack, host_page_mask );
++        NTSTATUS grown = STATUS_SUCCESS;
++
+         mutex_lock( &virtual_mutex );  /* no need for signal masking inside signal handler */
+-        if ((get_host_page_vprot( page ) & VPROT_GUARD) && grow_thread_stack( data, page, &stack_info ))
++        if (get_host_page_vprot( page ) & VPROT_GUARD) grown = grow_thread_stack( data, page, &stack_info );
++        else if (is_stack_reserve( data, page, &stack_info )) grown = grow_thread_stack_to( data, page, &stack_info );
++        if (grown)
+         {
+             rec->ExceptionCode = STATUS_STACK_OVERFLOW;
+             rec->NumberParameters = 0;
+-- 
+2.43.0
+

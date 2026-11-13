@@ -135,6 +135,99 @@ def main():
          "    output.color = slot.game.color;\n"
          "  } else if (slot.game.wanted > 0 && now_ms >= slot.wanted_started_ms) {\n")
 
+    # Occlusion queries on the ACCURATE renderer (fragment shader interlock): the pixel shader does
+    # the depth / stencil test itself and only skips its EDRAM writes for failing samples, so the
+    # pixel stays alive and the host occlusion query counted every pixel drawn: light flares and
+    # glows that games hide with queries showed through walls (Metal Gear Rising, The Darkness II).
+    # Kill the pixel at the end of the shader (after its EDRAM writes) when no sample passed, as
+    # the console's depth test would: the query then counts only the samples that passed. Same as
+    # mgr-ps5 7aa9915; Crackdown gets it before anyone has to report it.
+    rb_occlusion = sdk / "src" / "graphics" / "pipeline" / "shader" / "spirv_translator_rb.cpp"
+    edit(rb_occlusion,
+         "void SpirvShaderTranslator::CompleteFragmentShaderInMain() {\n"
+         "  // Loaded if needed.\n"
+         "  spv::Id msaa_samples = spv::NoResult;\n",
+         "void SpirvShaderTranslator::CompleteFragmentShaderInMain() {\n"
+         "  // Loaded if needed.\n"
+         "  spv::Id msaa_samples = spv::NoResult;\n"
+         "\n"
+         "  // [crackdown] Whether any sample passed the FSI depth / stencil test (occlusion queries).\n"
+         "  spv::Id var_fsi_any_sample_passed = spv::NoResult;\n"
+         "  if (edram_fragment_shader_interlock_) {\n"
+         "    var_fsi_any_sample_passed = builder_->createVariable(\n"
+         "        spv::NoPrecision, spv::StorageClassFunction, type_bool_,\n"
+         "        \"xe_var_fsi_any_sample_passed\", builder_->makeBoolConstant(false));\n"
+         "  }\n")
+    fsi_store_passed = (
+        "      builder_->createStore(\n"
+        "          builder_->createBinOp(\n"
+        "              spv::OpINotEqual, type_bool_,\n"
+        "              builder_->createBinOp(spv::OpBitwiseAnd, type_uint_, main_fsi_sample_mask_,\n"
+        "                                    builder_->makeUintConstant((uint32_t(1) << 4) - 1)),\n"
+        "              const_uint_0_),\n"
+        "          var_fsi_any_sample_passed);  // [crackdown]\n")
+    edit(rb_occlusion,
+         "    if (FSI_IsDepthStencilEarly()) {\n"
+         "      // Perform late depth / stencil writes for samples not discarded.\n",
+         "    if (FSI_IsDepthStencilEarly()) {\n" + fsi_store_passed +
+         "      // Perform late depth / stencil writes for samples not discarded.\n")
+    edit(rb_occlusion,
+         "      FSI_DepthStencilTest(msaa_samples,\n"
+         "                           fsi_pixel_potentially_killed || (color_targets_written & 0b1));\n",
+         "      FSI_DepthStencilTest(msaa_samples,\n"
+         "                           fsi_pixel_potentially_killed || (color_targets_written & 0b1));\n"
+         + fsi_store_passed)
+    edit(rb_occlusion,
+         "    builder_->createNoResultOp(spv::OpEndInvocationInterlockEXT);\n"
+         "  }\n"
+         "}\n",
+         "    builder_->createNoResultOp(spv::OpEndInvocationInterlockEXT);\n"
+         "\n"
+         "    // [crackdown] Not counted by occlusion queries when every sample failed (see ci/patch_framework.py).\n"
+         "    SpirvBuilder::IfBuilder fsi_no_sample_passed_if(\n"
+         "        builder_->createUnaryOp(\n"
+         "            spv::OpLogicalNot, type_bool_,\n"
+         "            builder_->createLoad(var_fsi_any_sample_passed, spv::NoPrecision)),\n"
+         "        spv::SelectionControlDontFlattenMask, *builder_);\n"
+         "    builder_->createNoResultOp(spv::OpKill);\n"
+         "    // OpKill terminates the block.\n"
+         "    fsi_no_sample_passed_if.makeEndIf(false);\n"
+         "  }\n"
+         "}\n")
+
+    # The game's rumble in the log (the completeness checklist's proof): the first non-zero
+    # XInputSetState of the session, then every 10 s how many there were and the strongest motors.
+    # "rumble mode 0x0" at connect is only scePadSetVibrationMode's success code.
+    edit(sdk / "src" / "input" / "ps5" / "ps5_input_driver.cpp",
+         "  if (vibration) {\n"
+         "    pad->native_low = vibration->left_motor_speed;\n"
+         "    pad->native_high = vibration->right_motor_speed;\n"
+         "    SendVibration(*pad);\n"
+         "  }\n",
+         "  if (vibration) {\n"
+         "    pad->native_low = vibration->left_motor_speed;\n"
+         "    pad->native_high = vibration->right_motor_speed;\n"
+         "    SendVibration(*pad);\n"
+         "    // [cd] the game's rumble, for the log\n"
+         "    static uint64_t cd_rumbles = 0, cd_last_ms = 0;\n"
+         "    static uint32_t cd_max_low = 0, cd_max_high = 0;\n"
+         "    static bool cd_first_logged = false;\n"
+         "    if (vibration->left_motor_speed || vibration->right_motor_speed) {\n"
+         "      if (!cd_first_logged && (cd_first_logged = true))\n"
+         "        REXLOG_INFO(\"PS5 input: the game's first rumble (left {}, right {})\",\n"
+         "                    uint32_t(vibration->left_motor_speed), uint32_t(vibration->right_motor_speed));\n"
+         "      ++cd_rumbles;\n"
+         "      cd_max_low = std::max<uint32_t>(cd_max_low, vibration->left_motor_speed);\n"
+         "      cd_max_high = std::max<uint32_t>(cd_max_high, vibration->right_motor_speed);\n"
+         "    }\n"
+         "    const uint64_t cd_now = SDL_GetTicks();\n"
+         "    if (cd_rumbles && cd_now - cd_last_ms >= 10000) {\n"
+         "      REXLOG_INFO(\"PS5 input: rumble {} times in 10 s (strongest left {}, right {})\", cd_rumbles,\n"
+         "                  cd_max_low, cd_max_high);\n"
+         "      cd_rumbles = 0, cd_max_low = cd_max_high = 0, cd_last_ms = cd_now;\n"
+         "    }\n"
+         "  }\n")
+
 
 if __name__ == "__main__":
     main()

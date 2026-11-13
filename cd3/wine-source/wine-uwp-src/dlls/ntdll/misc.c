@@ -1,0 +1,860 @@
+/*
+ * Helper functions for ntdll
+ *
+ * Copyright 2000 Juergen Schmied
+ * Copyright 2010 Marcus Meissner
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+ */
+
+#include <time.h>
+
+#include "ntstatus.h"
+#include "wine/debug.h"
+#include "wine/exception.h"
+#include "ntdll_misc.h"
+#include "wmistr.h"
+#include "evntrace.h"
+#include "evntprov.h"
+
+WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
+WINE_DECLARE_DEBUG_CHANNEL(tracelogging);
+
+LPCSTR debugstr_us( const UNICODE_STRING *us )
+{
+    if (!us) return "<null>";
+    return debugstr_wn(us->Buffer, us->Length / sizeof(WCHAR));
+}
+
+static int __cdecl compare_wrapper(void *ctx, const void *e1, const void *e2)
+{
+    int (__cdecl *compare)( const void *, const void * ) = ctx;
+    return compare( e1, e2 );
+}
+
+static inline void swap(char *l, char *r, size_t size)
+{
+    char tmp;
+
+    while(size--) {
+        tmp = *l;
+        *l++ = *r;
+        *r++ = tmp;
+    }
+}
+
+static void small_sort(void *base, size_t nmemb, size_t size,
+        int (CDECL *compar)(void *, const void *, const void *), void *context)
+{
+    size_t e, i;
+    char *max, *p;
+
+    for(e=nmemb; e>1; e--) {
+        max = base;
+        for(i=1; i<e; i++) {
+            p = (char*)base + i*size;
+            if(compar(context, p, max) > 0)
+                max = p;
+        }
+
+        if(p != max)
+            swap(p, max, size);
+    }
+}
+
+static void quick_sort(void *base, size_t nmemb, size_t size,
+        int (CDECL *compar)(void *, const void *, const void *), void *context)
+{
+    size_t stack_lo[8*sizeof(size_t)], stack_hi[8*sizeof(size_t)];
+    size_t beg, end, lo, hi, med;
+    int stack_pos;
+
+    stack_pos = 0;
+    stack_lo[stack_pos] = 0;
+    stack_hi[stack_pos] = nmemb-1;
+
+#define X(i) ((char*)base+size*(i))
+    while(stack_pos >= 0) {
+        beg = stack_lo[stack_pos];
+        end = stack_hi[stack_pos--];
+
+        if(end-beg < 8) {
+            small_sort(X(beg), end-beg+1, size, compar, context);
+            continue;
+        }
+
+        lo = beg;
+        hi = end;
+        med = lo + (hi-lo+1)/2;
+        if(compar(context, X(lo), X(med)) > 0)
+            swap(X(lo), X(med), size);
+        if(compar(context, X(lo), X(hi)) > 0)
+            swap(X(lo), X(hi), size);
+        if(compar(context, X(med), X(hi)) > 0)
+            swap(X(med), X(hi), size);
+
+        lo++;
+        hi--;
+        while(1) {
+            while(lo <= hi) {
+                if(lo!=med && compar(context, X(lo), X(med))>0)
+                    break;
+                lo++;
+            }
+
+            while(med != hi) {
+                if(compar(context, X(hi), X(med)) <= 0)
+                    break;
+                hi--;
+            }
+
+            if(hi < lo)
+                break;
+
+            swap(X(lo), X(hi), size);
+            if(hi == med)
+                med = lo;
+            lo++;
+            hi--;
+        }
+
+        while(hi > beg) {
+            if(hi!=med && compar(context, X(hi), X(med))!=0)
+                break;
+            hi--;
+        }
+
+        if(hi-beg >= end-lo) {
+            stack_lo[++stack_pos] = beg;
+            stack_hi[stack_pos] = hi;
+            stack_lo[++stack_pos] = lo;
+            stack_hi[stack_pos] = end;
+        }else {
+            stack_lo[++stack_pos] = lo;
+            stack_hi[stack_pos] = end;
+            stack_lo[++stack_pos] = beg;
+            stack_hi[stack_pos] = hi;
+        }
+    }
+#undef X
+}
+
+
+/*********************************************************************
+ *                  qsort_s   (NTDLL.@)
+ */
+void __cdecl qsort_s( void *base, size_t nmemb, size_t size,
+                      int (__cdecl *compar)(void *, const void *, const void *), void *context )
+{
+    const size_t total_size = nmemb * size;
+
+    if (!base && nmemb) return;
+    if (!size) return;
+    if (!compar) return;
+    if (total_size / size != nmemb) return;
+    if (nmemb < 2) return;
+    quick_sort( base, nmemb, size, compar, context );
+}
+
+
+/*********************************************************************
+ *                  qsort   (NTDLL.@)
+ */
+void __cdecl qsort( void *base, size_t nmemb, size_t size,
+                    int (__cdecl *compar)(const void *, const void *) )
+{
+    qsort_s( base, nmemb, size, compare_wrapper, compar );
+}
+
+
+/*********************************************************************
+ *                  bsearch_s   (NTDLL.@)
+ */
+void * __cdecl bsearch_s( const void *key, const void *base, size_t nmemb, size_t size,
+                          int (__cdecl *compare)(void *, const void *, const void *), void *ctx )
+{
+    SSIZE_T min = 0;
+    SSIZE_T max = nmemb - 1;
+
+    if (!size) return NULL;
+    if (!compare) return NULL;
+
+    while (min <= max)
+    {
+        SSIZE_T cursor = min + (max - min) / 2;
+        int ret = compare(ctx, key,(const char *)base+(cursor*size));
+        if (!ret)
+            return (char*)base+(cursor*size);
+        if (ret < 0)
+            max = cursor - 1;
+        else
+            min = cursor + 1;
+    }
+    return NULL;
+}
+
+
+/*********************************************************************
+ *                  bsearch   (NTDLL.@)
+ */
+void * __cdecl bsearch( const void *key, const void *base, size_t nmemb,
+                        size_t size, int (__cdecl *compar)(const void *, const void *) )
+{
+    return bsearch_s( key, base, nmemb, size, compare_wrapper, compar );
+}
+
+
+
+/*********************************************************************
+ *                  _lfind   (NTDLL.@)
+ */
+void * __cdecl _lfind( const void *key, const void *base, unsigned int *nmemb,
+                       size_t size, int(__cdecl *compar)(const void *, const void *) )
+{
+    size_t i, n = *nmemb;
+
+    for (i=0;i<n;i++)
+        if (!compar(key,(char*)base+(size*i)))
+            return (char*)base+(size*i);
+    return NULL;
+}
+
+/******************************************************************************
+ *                  WinSqmEndSession   (NTDLL.@)
+ */
+NTSTATUS WINAPI WinSqmEndSession(HANDLE session)
+{
+    FIXME("(%p): stub\n", session);
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+/*********************************************************************
+ *          WinSqmIncrementDWORD (NTDLL.@)
+ */
+void WINAPI WinSqmIncrementDWORD(DWORD unk1, DWORD unk2, DWORD unk3)
+{
+    FIXME("(%ld, %ld, %ld): stub\n", unk1, unk2, unk3);
+}
+
+/*********************************************************************
+ *                  WinSqmIsOptedIn   (NTDLL.@)
+ */
+BOOL WINAPI WinSqmIsOptedIn(void)
+{
+    FIXME("(): stub\n");
+    return FALSE;
+}
+
+/******************************************************************************
+ *                  WinSqmStartSession   (NTDLL.@)
+ */
+HANDLE WINAPI WinSqmStartSession(GUID *sessionguid, DWORD sessionid, DWORD unknown1)
+{
+    FIXME("(%p, 0x%lx, 0x%lx): stub\n", sessionguid, sessionid, unknown1);
+    return INVALID_HANDLE_VALUE;
+}
+
+/***********************************************************************
+ *          WinSqmSetDWORD (NTDLL.@)
+ */
+void WINAPI WinSqmSetDWORD(HANDLE session, DWORD datapoint_id, DWORD datapoint_value)
+{
+    FIXME("(%p, %ld, %ld): stub\n", session, datapoint_id, datapoint_value);
+}
+
+/******************************************************************************
+ *          WinSqmSetIfMaxDWORD (NTDLL.@)
+ */
+void WINAPI WinSqmSetIfMaxDWORD(DWORD unk1, DWORD unk2, DWORD unk3)
+{
+    FIXME("(0x%lx, 0x%lx, 0x%lx): stub\n", unk1, unk2, unk3);
+}
+
+/******************************************************************************
+ *                  EtwEventActivityIdControl (NTDLL.@)
+ */
+ULONG WINAPI EtwEventActivityIdControl(ULONG code, GUID *guid)
+{
+    static int once;
+
+    if (!once++) FIXME("0x%lx, %p: stub\n", code, guid);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwEventProviderEnabled (NTDLL.@)
+ */
+BOOLEAN WINAPI EtwEventProviderEnabled( REGHANDLE handle, UCHAR level, ULONGLONG keyword )
+{
+    WARN("%s, %u, %s: stub\n", wine_dbgstr_longlong(handle), level, wine_dbgstr_longlong(keyword));
+    return FALSE;
+}
+
+
+/* [cd3] Crackdown 3's achievements on the PS5. The game unlocks them by writing an Xbox Live event
+ * (TempActivateAchievement) through XSAPI's TraceLogging provider; on Windows the system uploads it. Here XSAPI's
+ * providers are enabled (it writes nothing while disabled) and each event it writes is decoded: one with an
+ * achievement id is appended to <package path>\..\trophies.txt ("id<TAB>unix time<TAB>event"), where the PS5 hub
+ * reads it; every XSAPI event also goes to xbox-events.txt beside it (the first 200), to see what the game sends. */
+static REGHANDLE cd3_xsapi[16];
+static LONG cd3_xsapi_count, cd3_events_logged;
+
+static BOOL cd3_is_xsapi( void *pc )
+{
+    LDR_DATA_TABLE_ENTRY *mod;
+    UNICODE_STRING xsapi;
+
+    if (!pc || LdrFindEntryForAddress( pc, &mod ) || !mod->BaseDllName.Buffer) return FALSE;
+    RtlInitUnicodeString( &xsapi, L"Microsoft.Xbox.Services.dll" );
+    return !RtlCompareUnicodeString( &mod->BaseDllName, &xsapi, TRUE );
+}
+
+static BOOL cd3_handle_is_xsapi( REGHANDLE handle )
+{
+    LONG i, n = min( cd3_xsapi_count, ARRAY_SIZE(cd3_xsapi) );
+    for (i = 0; i < n; i++) if (cd3_xsapi[i] == handle) return TRUE;
+    return FALSE;
+}
+
+/* appends a line to <WINE_UWP_PACKAGE_PATH minus "\game">\<name>; only for our installer's layout */
+static void cd3_append( const WCHAR *name, const char *line, ULONG len )
+{
+    static const WCHAR var_name[] = L"WINE_UWP_PACKAGE_PATH";
+    WCHAR path[MAX_PATH + 64], *p;
+    UNICODE_STRING var, value, nt;
+    OBJECT_ATTRIBUTES attr;
+    IO_STATUS_BLOCK io;
+    HANDLE file;
+    ULONG n;
+
+    RtlInitUnicodeString( &var, var_name );
+    wcscpy( path, L"\\??\\" );
+    value.Buffer = path + 4;
+    value.MaximumLength = (MAX_PATH - 1) * sizeof(WCHAR);
+    value.Length = 0;
+    if (RtlQueryEnvironmentVariable_U( NULL, &var, &value )) return;
+    n = 4 + value.Length / sizeof(WCHAR);
+    path[n] = 0;
+    while (n > 4 && (path[n - 1] == '\\' || path[n - 1] == ';')) path[--n] = 0;
+    if (!(p = wcsrchr( path, '\\' )) || wcsicmp( p + 1, L"game" )) return;
+    wcscpy( p + 1, name );
+    RtlInitUnicodeString( &nt, path );
+    InitializeObjectAttributes( &attr, &nt, OBJ_CASE_INSENSITIVE, 0, NULL );
+    if (NtCreateFile( &file, FILE_APPEND_DATA | SYNCHRONIZE, &attr, &io, NULL, FILE_ATTRIBUTE_NORMAL,
+                      FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN_IF,
+                      FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE, NULL, 0 )) return;
+    NtWriteFile( file, NULL, NULL, NULL, &io, line, len, NULL, NULL );
+    NtClose( file );
+}
+
+/* a field's text: ASCII from UTF-16/UTF-8 (other characters as '?') */
+static void cd3_text( char *out, size_t size, const BYTE *v, ULONG len, BOOL wide )
+{
+    size_t i = 0;
+    ULONG j;
+    for (j = 0; i + 1 < size && j < len; j += wide ? 2 : 1)
+    {
+        unsigned c = wide ? (j + 1 < len ? *(const WCHAR *)(v + j) : 0) : v[j];
+        if (!c) break;
+        out[i++] = c < 0x20 || c > 0x7e ? (c == '\t' || c == '\n' || c == '\r' ? ' ' : '?') : (char)c;
+    }
+    out[i] = 0;
+}
+
+/* an achievement id in a JSON text ("...chievementId":12 or "...chievementId":"12") */
+static int cd3_id_in_json( const char *s )
+{
+    const char *p = s;
+    while ((p = strstr( p, "chievement" )))
+    {
+        const char *q = p + 10;
+        while (*q && *q != '"') q++;               /* rest of the key */
+        if (*q == '"') q++;
+        while (*q == ' ' || *q == ':' || *q == '"') q++;
+        if (*q >= '0' && *q <= '9') return atoi( q );
+        p += 10;
+    }
+    return -1;
+}
+
+static void cd3_xsapi_event( ULONG count, const EVENT_DATA_DESCRIPTOR *data )
+{
+    const char *meta = NULL, *end = NULL, *p, *event = "?";
+    char line[1600], text[600];
+    size_t len = 0;
+    ULONG i, next = 0;
+    int id = -1;
+    LARGE_INTEGER now;
+
+#define CD3_OUT(...) do { if (len < sizeof(line) - 1) len += snprintf( line + len, sizeof(line) - len, __VA_ARGS__ ); \
+                      if (len > sizeof(line) - 1) len = sizeof(line) - 1; } while (0)
+    __TRY
+    {
+        for (i = 0; i < count; i++)
+        {
+            BYTE type = data[i].Reserved & 0xff;
+            if (type == 1) { meta = (const char *)(ULONG_PTR)data[i].Ptr; end = meta + data[i].Size; }
+            else if (type == 0 && !next) next = i;
+        }
+        p = meta ? meta + 2 : end;
+        while (p < end && (*p++ & 0x80)) ;
+        if (p < end) { event = p; p += strlen( p ) + 1; }
+        CD3_OUT( "%s", event );
+        while (p < end && next < count)
+        {
+            const char *name = p;
+            BYTE in, out = 0;
+            const BYTE *v;
+            ULONG size;
+            BOOL is_id;
+
+            p += strlen( p ) + 1;
+            in = *p++;
+            if (in & 0x80) { out = *p++; while (out & 0x80 && p < end) out = *p++; }
+            if ((in & 0x60) == 0x20) p += 2;
+            if ((in & 0x1f) == 24) continue;
+            if (in & 0x40) { next += 2; continue; }
+            v = (const BYTE *)(ULONG_PTR)data[next].Ptr;
+            size = data[next].Size;
+            next++;
+            is_id = strstr( name, "chievement" ) != NULL;
+            text[0] = 0;
+            switch (in & 0x1f)
+            {
+            case 1: cd3_text( text, sizeof(text), v, size, TRUE ); break;
+            case 2: cd3_text( text, sizeof(text), v, size, FALSE ); break;
+            case 3: case 4: snprintf( text, sizeof(text), "%u", v[0] ); break;
+            case 5: case 6: snprintf( text, sizeof(text), "%u", *(const USHORT *)v ); break;
+            case 7: case 8: case 13: case 20: snprintf( text, sizeof(text), "%d", *(const int *)v ); break;
+            case 9: case 10: case 21: snprintf( text, sizeof(text), "%I64d", *(const LONGLONG *)v ); break;
+            case 22: case 23:
+                if (next >= count) break;
+                v = (const BYTE *)(ULONG_PTR)data[next].Ptr;
+                size = data[next].Size;
+                next++;
+                cd3_text( text, sizeof(text), v, size, (in & 0x1f) == 22 );
+                break;
+            case 14: case 25: if (next < count) next++; break;
+            default: break;
+            }
+            CD3_OUT( "\t%s=%s", name, text );
+            if (id < 0 && is_id && text[0] >= '0' && text[0] <= '9') id = atoi( text );
+            if (id < 0 && text[0]) id = cd3_id_in_json( text );
+        }
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        CD3_OUT( "\t<fault>" );
+    }
+    __ENDTRY
+#undef CD3_OUT
+    if (len < sizeof(line) - 1) line[len++] = '\n';
+    if (InterlockedIncrement( &cd3_events_logged ) <= 200) cd3_append( L"xbox-events.txt", line, len );
+    if (id >= 0 && (strstr( event, "chievement" ) || strstr( line, "chievement" )))
+    {
+        char got[160];
+        int n;
+        NtQuerySystemTime( &now );
+        n = snprintf( got, sizeof(got), "%d\t%I64d\t%.100s\n", id,
+                      now.QuadPart / 10000000 - 11644473600LL, event );
+        cd3_append( L"trophies.txt", got, n );
+    }
+}
+
+/******************************************************************************
+ *                  EtwEventRegister (NTDLL.@)
+ */
+ULONG WINAPI EtwEventRegister( LPCGUID provider, PENABLECALLBACK callback, PVOID context,
+                PREGHANDLE handle )
+{
+    WARN("(%s, %p, %p, %p) stub.\n", debugstr_guid(provider), callback, context, handle);
+
+    if (!handle) return ERROR_INVALID_PARAMETER;
+
+    *handle = 0xdeadbeef;
+    if (cd3_is_xsapi( __builtin_return_address(0) ))
+    {
+        LONG i = InterlockedIncrement( &cd3_xsapi_count ) - 1;
+        if (i < ARRAY_SIZE(cd3_xsapi))
+        {
+            *handle = cd3_xsapi[i] = 0x58534100 + i;   /* [cd3] its own, so its events are known */
+            if (callback) callback( provider, 1 /* EVENT_CONTROL_CODE_ENABLE_PROVIDER */, 5, ~(ULONGLONG)0, 0,
+                                    NULL, context );
+            return ERROR_SUCCESS;
+        }
+    }
+    /* With trace+tracelogging, enable every provider at verbose level so TraceLogging (and wil)
+     * events are written, and print them below: it is the app's own log. */
+    if (TRACE_ON(tracelogging) && callback)
+        callback( provider, 1 /* EVENT_CONTROL_CODE_ENABLE_PROVIDER */, 5, ~(ULONGLONG)0, 0, NULL, context );
+    return ERROR_SUCCESS;
+}
+
+/* decode a TraceLogging event (self-describing: the event and field names travel with the data) */
+static void dump_tracelogging( ULONG count, const EVENT_DATA_DESCRIPTOR *data )
+{
+    const char *provider = "?", *meta = NULL, *end = NULL, *p;
+    char line[900];
+    size_t len = 0;
+    ULONG i, next = 0;
+    const WCHAR *long_str = NULL;   /* the first string too long for one line, continued below it */
+    ULONG long_len = 0;
+
+#define TLG_OUT(...) do { if (len < sizeof(line) - 1) len += snprintf( line + len, sizeof(line) - len, __VA_ARGS__ ); \
+                      if (len > sizeof(line) - 1) len = sizeof(line) - 1; } while (0)
+    __TRY
+    {
+        for (i = 0; i < count; i++)
+        {
+            BYTE type = data[i].Reserved & 0xff;
+            if (type == 2) provider = (const char *)(ULONG_PTR)data[i].Ptr + 2;
+            else if (type == 1) { meta = (const char *)(ULONG_PTR)data[i].Ptr; end = meta + data[i].Size; }
+            else if (type == 0 && !next) next = i;
+        }
+        p = meta ? meta + 2 : end;
+        while (p < end && (*p++ & 0x80)) ;   /* event tags */
+        if (p < end)
+        {
+            TLG_OUT( "%s %s:", provider, p );
+            p += strlen( p ) + 1;
+        }
+        while (p < end && next < count)
+        {
+            const char *name = p;
+            BYTE in, out = 0;
+            const BYTE *v;
+            ULONG size;
+
+            p += strlen( p ) + 1;
+            in = *p++;
+            if (in & 0x80) { out = *p++; while (out & 0x80 && p < end) out = *p++; }
+            if ((in & 0x60) == 0x20) p += 2;   /* constant count */
+            if ((in & 0x1f) == 24) { TLG_OUT( " %s{", name ); continue; }   /* struct: members follow */
+            if (in & 0x40)                      /* variable-count array: count, then data */
+            {
+                TLG_OUT( " %s=[%u]", name, *(const USHORT *)(ULONG_PTR)data[next].Ptr );
+                next += 2;
+                continue;
+            }
+            v = (const BYTE *)(ULONG_PTR)data[next].Ptr;
+            size = data[next].Size;
+            next++;
+            switch (in & 0x1f)
+            {
+            case 1:
+                TLG_OUT( " %s=%s", name, debugstr_wn( (const WCHAR *)v, size / 2 ) );
+                if (size / 2 > 200 && !long_str) { long_str = (const WCHAR *)v; long_len = size / 2; }
+                break;
+            case 2: TLG_OUT( " %s=%s", name, debugstr_an( (const char *)v, size ) ); break;
+            case 3: case 4: TLG_OUT( " %s=%u", name, v[0] ); break;
+            case 5: case 6: TLG_OUT( " %s=%u", name, *(const USHORT *)v ); break;
+            case 7: TLG_OUT( " %s=%d", name, *(const int *)v ); break;
+            case 8: case 13: case 20: TLG_OUT( " %s=%#x", name, *(const UINT *)v ); break;
+            case 9: case 10: case 21: case 16: TLG_OUT( " %s=%#I64x", name, *(const ULONGLONG *)v ); break;
+            case 11: TLG_OUT( " %s=%f", name, *(const float *)v ); break;
+            case 12: TLG_OUT( " %s=%f", name, *(const double *)v ); break;
+            case 15: TLG_OUT( " %s=%s", name, debugstr_guid( (const GUID *)v ) ); break;
+            case 22: case 23: case 14: case 25:  /* counted: a UINT16 size descriptor, then the data */
+                if (next >= count) break;
+                v = (const BYTE *)(ULONG_PTR)data[next].Ptr;
+                size = data[next].Size;
+                next++;
+                if ((in & 0x1f) == 22)
+                {
+                    TLG_OUT( " %s=%s", name, debugstr_wn( (const WCHAR *)v, size / 2 ) );
+                    if (size / 2 > 200 && !long_str) { long_str = (const WCHAR *)v; long_len = size / 2; }
+                }
+                else if ((in & 0x1f) == 23) TLG_OUT( " %s=%s", name, debugstr_an( (const char *)v, size ) );
+                else TLG_OUT( " %s=<%lu bytes>", name, size );
+                break;
+            default: TLG_OUT( " %s=<type %u>", name, in & 0x1f ); break;
+            }
+        }
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        TLG_OUT( " <fault>" );
+    }
+    __ENDTRY
+#undef TLG_OUT
+    if (len) TRACE_(tracelogging)( "%s\n", line );
+    /* A long string (an app's own log message with a JSON payload) is cut short in that line; the rest follows in
+     * pieces of 160 characters, up to 8 KiB, each line short enough for one debug line. */
+    if (long_str && TRACE_ON(tracelogging))
+    {
+        __TRY
+        {
+            ULONG pos;
+            for (pos = 160; pos < long_len && pos < 8192; pos += 160)
+                TRACE_(tracelogging)( "  +%lu %s\n", pos, debugstr_wn( long_str + pos, min( 160, long_len - pos ) ) );
+        }
+        __EXCEPT_PAGE_FAULT
+        {
+        }
+        __ENDTRY
+    }
+}
+
+/******************************************************************************
+ *                  EtwEventUnregister (NTDLL.@)
+ */
+ULONG WINAPI EtwEventUnregister( REGHANDLE handle )
+{
+    WARN("(%s) stub.\n", wine_dbgstr_longlong(handle));
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwNotificationRegister (NTDLL.@)
+ *
+ * Registers for ETW notifications (provider enable/disable and the like). There is no ETW session
+ * here to send any, so the registration succeeds and the callback is never called. The Xbox app
+ * calls this at start-up; the missing export aborted it.
+ */
+ULONG WINAPI EtwNotificationRegister( const GUID *guid, ULONG type, void *callback, void *context,
+                                      REGHANDLE *handle )
+{
+    FIXME( "(%s, %lu, %p, %p, %p) stub\n", debugstr_guid(guid), type, callback, context, handle );
+    if (!handle) return ERROR_INVALID_PARAMETER;
+    *handle = 0xdeadbeef;
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwNotificationUnregister (NTDLL.@)
+ */
+ULONG WINAPI EtwNotificationUnregister( REGHANDLE handle, void **context )
+{
+    FIXME( "(%s, %p) stub\n", wine_dbgstr_longlong(handle), context );
+    if (context) *context = NULL;
+    return ERROR_SUCCESS;
+}
+
+/*********************************************************************
+ *                  EtwEventSetInformation   (NTDLL.@)
+ */
+ULONG WINAPI EtwEventSetInformation( REGHANDLE handle, EVENT_INFO_CLASS class, void *info,
+                                     ULONG length )
+{
+    FIXME("(%s, %u, %p, %lu) stub\n", wine_dbgstr_longlong(handle), class, info, length);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwEventWriteString   (NTDLL.@)
+ */
+ULONG WINAPI EtwEventWriteString( REGHANDLE handle, UCHAR level, ULONGLONG keyword, PCWSTR string )
+{
+    FIXME("%s, %u, %s, %s: stub\n", wine_dbgstr_longlong(handle), level,
+          wine_dbgstr_longlong(keyword), debugstr_w(string));
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwEventWriteTransfer   (NTDLL.@)
+ */
+ULONG WINAPI EtwEventWriteTransfer( REGHANDLE handle, PCEVENT_DESCRIPTOR descriptor, LPCGUID activity,
+                                    LPCGUID related, ULONG count, PEVENT_DATA_DESCRIPTOR data )
+{
+    if (cd3_handle_is_xsapi( handle )) cd3_xsapi_event( count, data );
+    if (TRACE_ON(tracelogging)) dump_tracelogging( count, data );
+    else FIXME("%s, %p, %s, %s, %lu, %p: stub\n", wine_dbgstr_longlong(handle), descriptor,
+               debugstr_guid(activity), debugstr_guid(related), count, data);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwRegisterTraceGuidsW (NTDLL.@)
+ *
+ * Register an event trace provider and the event trace classes that it uses
+ * to generate events.
+ *
+ * PARAMS
+ *  RequestAddress     [I]   ControlCallback function
+ *  RequestContext     [I]   Optional provider-defined context
+ *  ControlGuid        [I]   GUID of the registering provider
+ *  GuidCount          [I]   Number of elements in the TraceGuidReg array
+ *  TraceGuidReg       [I/O] Array of TRACE_GUID_REGISTRATION structures
+ *  MofImagePath       [I]   not supported, set to NULL
+ *  MofResourceName    [I]   not supported, set to NULL
+ *  RegistrationHandle [O]   Provider's registration handle
+ *
+ * RETURNS
+ *  Success: ERROR_SUCCESS
+ *  Failure: System error code
+ */
+ULONG WINAPI EtwRegisterTraceGuidsW( WMIDPREQUEST RequestAddress,
+                void *RequestContext, const GUID *ControlGuid, ULONG GuidCount,
+                TRACE_GUID_REGISTRATION *TraceGuidReg, const WCHAR *MofImagePath,
+                const WCHAR *MofResourceName, TRACEHANDLE *RegistrationHandle )
+{
+    WARN("(%p, %p, %s, %lu, %p, %s, %s, %p): stub\n", RequestAddress, RequestContext,
+          debugstr_guid(ControlGuid), GuidCount, TraceGuidReg, debugstr_w(MofImagePath),
+          debugstr_w(MofResourceName), RegistrationHandle);
+
+    if (TraceGuidReg)
+    {
+        ULONG i;
+        for (i = 0; i < GuidCount; i++)
+        {
+            FIXME("  register trace class %s\n", debugstr_guid(TraceGuidReg[i].Guid));
+            TraceGuidReg[i].RegHandle = (HANDLE)0xdeadbeef;
+        }
+    }
+    *RegistrationHandle = (TRACEHANDLE)0xdeadbeef;
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwRegisterTraceGuidsA (NTDLL.@)
+ */
+ULONG WINAPI EtwRegisterTraceGuidsA( WMIDPREQUEST RequestAddress,
+                void *RequestContext, const GUID *ControlGuid, ULONG GuidCount,
+                TRACE_GUID_REGISTRATION *TraceGuidReg, const char *MofImagePath,
+                const char *MofResourceName, TRACEHANDLE *RegistrationHandle )
+{
+    WARN("(%p, %p, %s, %lu, %p, %s, %s, %p): stub\n", RequestAddress, RequestContext,
+          debugstr_guid(ControlGuid), GuidCount, TraceGuidReg, debugstr_a(MofImagePath),
+          debugstr_a(MofResourceName), RegistrationHandle);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwUnregisterTraceGuids (NTDLL.@)
+ */
+ULONG WINAPI EtwUnregisterTraceGuids( TRACEHANDLE RegistrationHandle )
+{
+    if (!RegistrationHandle)
+         return ERROR_INVALID_PARAMETER;
+
+    WARN("%s: stub\n", wine_dbgstr_longlong(RegistrationHandle));
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwEventEnabled (NTDLL.@)
+ */
+BOOLEAN WINAPI EtwEventEnabled( REGHANDLE handle, const EVENT_DESCRIPTOR *descriptor )
+{
+    WARN("(%s, %p): stub\n", wine_dbgstr_longlong(handle), descriptor);
+    return FALSE;
+}
+
+/******************************************************************************
+ *                  EtwEventWrite (NTDLL.@)
+ */
+ULONG WINAPI EtwEventWrite( REGHANDLE handle, const EVENT_DESCRIPTOR *descriptor, ULONG count,
+    EVENT_DATA_DESCRIPTOR *data )
+{
+    if (TRACE_ON(tracelogging)) dump_tracelogging( count, data );
+    else FIXME("(%s, %p, %lu, %p): stub\n", wine_dbgstr_longlong(handle), descriptor, count, data);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwEventWriteEx (NTDLL.@)
+ */
+ULONG WINAPI EtwEventWriteEx( REGHANDLE handle, const EVENT_DESCRIPTOR *descriptor, ULONG64 filter,
+                            ULONG flags, const GUID *activity_id, const GUID *related_activity_id,
+                            ULONG data_count, EVENT_DATA_DESCRIPTOR *data )
+{
+    if (TRACE_ON(tracelogging)) dump_tracelogging( data_count, data );
+    else FIXME( "(%s, %p, %#I64x, %lu, %p, %p, %lu, %p): stub\n", wine_dbgstr_longlong(handle), descriptor, filter,
+                flags, activity_id, related_activity_id, data_count, data );
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwGetTraceEnableFlags (NTDLL.@)
+ */
+ULONG WINAPI EtwGetTraceEnableFlags( TRACEHANDLE handle )
+{
+    FIXME("(%s) stub\n", wine_dbgstr_longlong(handle));
+    return 0;
+}
+
+/******************************************************************************
+ *                  EtwGetTraceEnableLevel (NTDLL.@)
+ */
+UCHAR WINAPI EtwGetTraceEnableLevel( TRACEHANDLE handle )
+{
+    FIXME("(%s) stub\n", wine_dbgstr_longlong(handle));
+    return TRACE_LEVEL_VERBOSE;
+}
+
+/******************************************************************************
+ *                  EtwGetTraceLoggerHandle (NTDLL.@)
+ */
+TRACEHANDLE WINAPI EtwGetTraceLoggerHandle( PVOID buf )
+{
+    FIXME("(%p) stub\n", buf);
+    return INVALID_PROCESSTRACE_HANDLE;
+}
+
+/******************************************************************************
+ *                  EtwLogTraceEvent (NTDLL.@)
+ */
+ULONG WINAPI EtwLogTraceEvent( TRACEHANDLE SessionHandle, PEVENT_TRACE_HEADER EventTrace )
+{
+    FIXME("%s %p\n", wine_dbgstr_longlong(SessionHandle), EventTrace);
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+/******************************************************************************
+ *                  EtwTraceMessageVa (NTDLL.@)
+ */
+ULONG WINAPI EtwTraceMessageVa( TRACEHANDLE handle, ULONG flags, LPGUID guid, USHORT number,
+                                va_list args )
+{
+    FIXME("(%s %lx %s %d) : stub\n", wine_dbgstr_longlong(handle), flags, debugstr_guid(guid), number);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwTraceMessage (NTDLL.@)
+ */
+ULONG WINAPIV EtwTraceMessage( TRACEHANDLE handle, ULONG flags, LPGUID guid, /*USHORT*/ ULONG number, ... )
+{
+    va_list valist;
+    ULONG ret;
+
+    va_start( valist, number );
+    ret = EtwTraceMessageVa( handle, flags, guid, number, valist );
+    va_end( valist );
+    return ret;
+}
+
+/*********************************************************************
+ *                  SbSelectProcedure   (NTDLL.@)
+ *
+ * Switchback quirk lookup.  Returning NULL tells the caller that no
+ * compatibility procedure applies.
+ */
+void * WINAPI SbSelectProcedure( ULONG module_id, ULONG scenario, void *info, void *context )
+{
+    FIXME( "%#lx %#lx %p %p: stub\n", module_id, scenario, info, context );
+    return NULL;
+}
+
+/*********************************************************************
+ *                  NtQuerySecurityPolicy   (NTDLL.@)
+ */
+NTSTATUS WINAPI NtQuerySecurityPolicy( const UNICODE_STRING *policy, const UNICODE_STRING *key,
+                                       const UNICODE_STRING *value, ULONG type, void *data, ULONG *size )
+{
+    FIXME( "%s %s %s %lu %p %p: stub\n", debugstr_us(policy), debugstr_us(key), debugstr_us(value),
+           type, data, size );
+    return STATUS_NOT_SUPPORTED;
+}

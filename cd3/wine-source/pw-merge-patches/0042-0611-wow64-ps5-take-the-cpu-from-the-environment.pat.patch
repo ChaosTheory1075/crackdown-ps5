@@ -1,0 +1,76 @@
+From 2352635ecd413a85ba3f4e69764deb2bf9064e2e Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:35 -0500
+Subject: [PATCH 042/122] 
+ 0611-wow64-ps5-take-the-cpu-from-the-environment.patch
+
+---
+ dlls/wow64/syscall.c | 45 +++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 44 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/wow64/syscall.c b/dlls/wow64/syscall.c
+index a5f1a94..5d48416 100644
+--- a/dlls/wow64/syscall.c
++++ b/dlls/wow64/syscall.c
+@@ -921,6 +921,49 @@ static HMODULE load_64bit_module( const WCHAR *name )
+ }
+ 
+ 
++/**********************************************************************
++ *           load_environment_cpu_dll
++ *
++ * PS5: WINE_PS5_WOW64_CPU names this process's CPU backend; prospero-win's
++ * launcher sets it per game. Only the two backends the runtime ships are
++ * accepted. When the named backend cannot be loaded (an older prefix without
++ * it), the prefix's own choice is used instead of ending the process.
++ */
++static HMODULE load_environment_cpu_dll(void)
++{
++    static const WCHAR *const allowed[] = { L"wow64native.dll", L"wowprospero.dll" };
++    static const char *const names[] = { "wow64native.dll", "wowprospero.dll" };
++    const WCHAR *dir = get_machine_wow64_dir( IMAGE_FILE_MACHINE_TARGET_HOST );
++    WCHAR value[32], path[MAX_PATH];
++    UNICODE_STRING name, str;
++    HMODULE module;
++    NTSTATUS status;
++    unsigned int i;
++
++    RtlInitUnicodeString( &name, L"WINE_PS5_WOW64_CPU" );
++    str.Buffer = value;
++    str.Length = 0;
++    str.MaximumLength = sizeof(value) - sizeof(WCHAR);
++    if (RtlQueryEnvironmentVariable_U( NULL, &name, &str )) return NULL;
++    value[str.Length / sizeof(WCHAR)] = 0;
++    for (i = 0; i < ARRAY_SIZE(allowed); i++) if (!wcscmp( value, allowed[i] )) break;
++    if (i == ARRAY_SIZE(allowed))
++    {
++        ERR( "ignoring WINE_PS5_WOW64_CPU: not wow64native.dll or wowprospero.dll\n" );
++        return NULL;
++    }
++    swprintf( path, MAX_PATH, L"%s\\%s", dir, allowed[i] );
++    RtlInitUnicodeString( &str, path );
++    if ((status = LdrLoadDll( dir, 0, &str, &module )))
++    {
++        ERR( "%s not loaded (%lx); using the prefix's CPU\n", names[i], status );
++        return NULL;
++    }
++    MESSAGE( "wow64: CPU %s from WINE_PS5_WOW64_CPU\n", names[i] );
++    return module;
++}
++
++
+ /**********************************************************************
+  *           get_cpu_dll_name
+  */
+@@ -1026,7 +1069,7 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
+     LdrGetDllHandle( NULL, 0, &str, &module );
+     GET_PTR( LdrSystemDllInitBlock );
+ 
+-    module = load_64bit_module( get_cpu_dll_name() );
++    if (!(module = load_environment_cpu_dll())) module = load_64bit_module( get_cpu_dll_name() );
+     GET_PTR( BTCpuGetBopCode );
+     GET_PTR( BTCpuGetContext );
+     GET_PTR( BTCpuIsProcessorFeaturePresent );
+-- 
+2.43.0
+

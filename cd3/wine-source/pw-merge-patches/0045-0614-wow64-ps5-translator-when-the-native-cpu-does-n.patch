@@ -1,0 +1,125 @@
+From 3ad27a9ade10220e9274516fcadcab2be9db80e4 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:35 -0500
+Subject: [PATCH 045/122] 
+ 0614-wow64-ps5-translator-when-the-native-cpu-does-not-start.patch
+
+---
+ dlls/wow64/syscall.c | 70 +++++++++++++++++++++++++++++---------------
+ 1 file changed, 47 insertions(+), 23 deletions(-)
+
+diff --git a/dlls/wow64/syscall.c b/dlls/wow64/syscall.c
+index 897b184..322fd73 100644
+--- a/dlls/wow64/syscall.c
++++ b/dlls/wow64/syscall.c
+@@ -921,6 +921,9 @@ static HMODULE load_64bit_module( const WCHAR *name )
+ }
+ 
+ 
++/* PS5: the environment chose wow64native.dll (patch 0611) */
++static BOOL environment_cpu_native;
++
+ /**********************************************************************
+  *           load_environment_cpu_dll
+  *
+@@ -960,6 +963,7 @@ static HMODULE load_environment_cpu_dll(void)
+         return NULL;
+     }
+     MESSAGE( "wow64: CPU %s from WINE_PS5_WOW64_CPU\n", names[i] );
++    environment_cpu_native = (i == 0);
+     return module;
+ }
+ 
+@@ -1065,39 +1069,58 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
+     NtCurrentTeb()->TlsSlots[WOW64_TLS_WOW64INFO] = wow64info;
+ 
+ #define GET_PTR(name) p ## name = RtlFindExportedRoutineByName( module, #name )
++#define GET_CPU_PTRS() do { \
++    GET_PTR( BTCpuGetBopCode ); \
++    GET_PTR( BTCpuGetContext ); \
++    GET_PTR( BTCpuIsProcessorFeaturePresent ); \
++    GET_PTR( BTCpuProcessInit ); \
++    GET_PTR( BTCpuThreadInit ); \
++    GET_PTR( BTCpuResetToConsistentState ); \
++    GET_PTR( BTCpuSetContext ); \
++    GET_PTR( BTCpuSimulate ); \
++    GET_PTR( BTCpuFlushInstructionCache2 ); \
++    GET_PTR( BTCpuFlushInstructionCacheHeavy ); \
++    GET_PTR( BTCpuNotifyMapViewOfSection ); \
++    GET_PTR( BTCpuNotifyMemoryAlloc ); \
++    GET_PTR( BTCpuNotifyMemoryDirty ); \
++    GET_PTR( BTCpuNotifyMemoryFree ); \
++    GET_PTR( BTCpuNotifyMemoryProtect ); \
++    GET_PTR( BTCpuNotifyProcessExecuteFlagsChange ); \
++    GET_PTR( BTCpuNotifyReadFile ); \
++    GET_PTR( BTCpuNotifyUnmapViewOfSection ); \
++    GET_PTR( BTCpuUpdateProcessorInformation ); \
++    GET_PTR( BTCpuProcessTerm ); \
++    GET_PTR( BTCpuThreadTerm ); \
++    GET_PTR( __wine_get_unix_opcode ); \
++} while (0)
+ 
+     LdrGetDllHandle( NULL, 0, &str, &module );
+     GET_PTR( LdrSystemDllInitBlock );
+ 
+     if (!(module = load_environment_cpu_dll())) module = load_64bit_module( get_cpu_dll_name() );
+-    GET_PTR( BTCpuGetBopCode );
+-    GET_PTR( BTCpuGetContext );
+-    GET_PTR( BTCpuIsProcessorFeaturePresent );
+-    GET_PTR( BTCpuProcessInit );
+-    GET_PTR( BTCpuThreadInit );
+-    GET_PTR( BTCpuResetToConsistentState );
+-    GET_PTR( BTCpuSetContext );
+-    GET_PTR( BTCpuSimulate );
+-    GET_PTR( BTCpuFlushInstructionCache2 );
+-    GET_PTR( BTCpuFlushInstructionCacheHeavy );
+-    GET_PTR( BTCpuNotifyMapViewOfSection );
+-    GET_PTR( BTCpuNotifyMemoryAlloc );
+-    GET_PTR( BTCpuNotifyMemoryDirty );
+-    GET_PTR( BTCpuNotifyMemoryFree );
+-    GET_PTR( BTCpuNotifyMemoryProtect );
+-    GET_PTR( BTCpuNotifyProcessExecuteFlagsChange );
+-    GET_PTR( BTCpuNotifyReadFile );
+-    GET_PTR( BTCpuNotifyUnmapViewOfSection );
+-    GET_PTR( BTCpuUpdateProcessorInformation );
+-    GET_PTR( BTCpuProcessTerm );
+-    GET_PTR( BTCpuThreadTerm );
+-    GET_PTR( __wine_get_unix_opcode );
++    GET_CPU_PTRS();
+ 
+     module = load_64bit_module( L"wow64win.dll" );
+     GET_PTR( sdwhwin32 );
+     syscall_tables[1] = *psdwhwin32;
+ 
+-    pBTCpuProcessInit();
++    /* PS5: wow64native.dll refuses to start when ntdll does not report native
++     * readiness (patch 0883), for instance on a firmware whose signal frame it
++     * could not verify. Run the game on the translator then instead of ending
++     * the process at its first 32-bit instruction. wow64native's
++     * BTCpuProcessInit returns its status; it changes nothing when it fails. */
++    if (environment_cpu_native)
++    {
++        NTSTATUS status = ((NTSTATUS (WINAPI *)(void))pBTCpuProcessInit)();
++        if (status)
++        {
++            ERR( "wow64native.dll did not start (%lx); using wowprospero.dll\n", status );
++            module = load_64bit_module( L"wowprospero.dll" );
++            GET_CPU_PTRS();
++            pBTCpuProcessInit();
++        }
++    }
++    else pBTCpuProcessInit();
+ 
+     module = (HMODULE)(ULONG_PTR)pLdrSystemDllInitBlock->ntdll_handle;
+     init_image_mapping( module );
+@@ -1120,6 +1143,7 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
+     init_file_redirects();
+     return TRUE;
+ 
++#undef GET_CPU_PTRS
+ #undef GET_PTR
+ }
+ 
+-- 
+2.43.0
+

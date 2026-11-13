@@ -1,5 +1,6 @@
 // Crackdown PS5 - see cd_install.h.
 #include "cd_install.h"
+#include "cd_text.h"
 #if REX_PLATFORM_PS5
 
 #include <algorithm>
@@ -52,7 +53,12 @@ using rex::X_STATUS;  // (X_STATUS_SUCCESS names it unqualified)
 namespace {
 
 constexpr uint32_t kTitleId = 0x4D5307DC;
+constexpr uint32_t kTitleId2 = 0x4D5308BC;  // Crackdown 2
+// Crackdown 2's Title Update 5 Default.xexp (0.0.5.1): cd2.bin is built from it
+constexpr uint64_t kUpdate5Xexp2Size = 2504704;
 constexpr uint32_t kTypeSave = 0x00000001, kTypeDlc = 0x00000002, kTypeUpdate = 0x000B0000;
+// Avatar items (shirts and props for the Xbox 360 avatar): nothing on the PS5 uses them.
+constexpr uint32_t kTypeAvatarItem = 0x00009000;
 // Title Update 6's Default.xexp (TU5's is 1841152 bytes)
 constexpr uint64_t kUpdate6XexpSize = 1853440;
 // The DLC packages' names on the Xbox 360, the folders the runtime finds them in.
@@ -73,6 +79,11 @@ std::string Lower(std::string s) {
   for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
   return s;
 }
+
+// Whose a title id is: 1 Crackdown, 2 Crackdown 2, 0 neither.
+int GameOf(uint32_t title) { return title == kTitleId ? 1 : title == kTitleId2 ? 2 : 0; }
+const char* GameName(int game) { return game == 2 ? "Crackdown 2" : "Crackdown"; }
+const char* GameFolderName(int game) { return game == 2 ? "game2" : "game"; }
 
 std::string Ext(const fs::path& p) { return Lower(p.extension().string()); }
 
@@ -112,6 +123,55 @@ bool ReadHeader(const fs::path& file, Header& h) {
   h.type = static_cast<uint32_t>(static_cast<rex::system::XContentType>(header->metadata.content_type));
   h.name = header->metadata.display_name(rex::system::XLanguage::kEnglish);
   return true;
+}
+
+// An executable's title id: its execution info header (key 0x00040006), 0 when unreadable.
+uint32_t XexTitleId(const fs::path& xex) {
+  std::ifstream in(xex, std::ios::binary);
+  unsigned char head[0x18] = {};
+  if (!in.read(reinterpret_cast<char*>(head), sizeof(head)) || std::memcmp(head, "XEX2", 4)) return 0;
+  auto be = [](const unsigned char* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; };
+  const uint32_t count = std::min<uint32_t>(be(head + 0x14), 64);
+  for (uint32_t i = 0; i < count; ++i) {
+    unsigned char entry[8];
+    if (!in.seekg(0x18 + i * 8) || !in.read(reinterpret_cast<char*>(entry), 8)) return 0;
+    if (be(entry) != 0x00040006) continue;
+    unsigned char info[16];
+    if (!in.seekg(be(entry + 4)) || !in.read(reinterpret_cast<char*>(info), sizeof(info))) return 0;
+    return be(info + 12);
+  }
+  return 0;
+}
+
+// Which game's disc a folder is (its default.xex's title id): 1, 2, or 0 (neither).
+int GameFolderOf(const fs::path& dir) {
+  const fs::path xex = FindChild(dir, "default.xex");
+  return xex.empty() ? 0 : GameOf(XexTitleId(xex));
+}
+
+// Which game's disc an image is: its default.xex's title id (1, 2, or 0).
+int ImageGame(const fs::path& image) {
+  rex::filesystem::DiscImageDevice disc("\\Device\\CdProbe", image);
+  if (!disc.Initialize()) return 0;
+  rex::filesystem::Entry* xex = disc.ResolvePath("default.xex");
+  rex::filesystem::File* in = nullptr;
+  if (!xex || xex->Open(rex::filesystem::FileAccess::kFileReadData, &in) != X_STATUS_SUCCESS || !in) return 0;
+  std::vector<uint8_t> head(std::min<size_t>(xex->size(), 64 * 1024));
+  size_t got = 0;
+  in->ReadSync(std::span<uint8_t>(head.data(), head.size()), 0, &got);
+  in->Destroy();
+  auto be = [&](size_t at) -> uint32_t {
+    return at + 4 <= got ? uint32_t(head[at]) << 24 | uint32_t(head[at + 1]) << 16 | uint32_t(head[at + 2]) << 8 |
+                               head[at + 3]
+                         : 0;
+  };
+  if (got < 0x18 || std::memcmp(head.data(), "XEX2", 4)) return 0;
+  const uint32_t count = std::min<uint32_t>(be(0x14), 64);
+  for (uint32_t i = 0; i < count; ++i) {
+    if (be(0x18 + i * 8) != 0x00040006) continue;
+    return GameOf(be(size_t(be(0x18 + i * 8 + 4)) + 12));
+  }
+  return 0;
 }
 
 int DlcOf(const fs::path& file, const std::string& name) {
@@ -384,7 +444,7 @@ class Copier {
   // `e`'s children into `dest`.
   bool Children(rex::filesystem::Entry* e, const fs::path& dest, std::string& error) {
     if (!in_ || !out_) {
-      error = "out of memory";
+      error = T("out of memory", "memória insuficiente");
       return false;
     }
     std::error_code ec;
@@ -403,13 +463,13 @@ class Copier {
     if (image_) {
       base = static_cast<rex::filesystem::DiscImageEntry*>(e)->data_offset();
     } else if (e->Open(rex::filesystem::FileAccess::kFileReadData, &in) != X_STATUS_SUCCESS || !in) {
-      error = "couldn't read " + e->path();
+      error = T("couldn't read ", "não deu para ler ") + e->path();
       return false;
     }
     FileWriter out(out_, stats_, preallocate_);
     if (!out.Open(dest, size)) {
       if (in) in->Destroy();
-      error = "couldn't write " + dest.string() + " (is the drive full?)";
+      error = T("couldn't write ", "não deu para gravar ") + dest.string() + T(" (is the drive full?)", " (o disco está cheio?)");
       return false;
     }
     size_t offset = 0;
@@ -430,7 +490,7 @@ class Copier {
     }
     ok = out.Close() && ok && offset == size;
     if (in) in->Destroy();
-    if (!ok) error = "couldn't copy " + e->path() + " (is the drive full?)";
+    if (!ok) error = T("couldn't copy ", "não deu para copiar ") + e->path() + T(" (is the drive full?)", " (o disco está cheio?)");
     return ok;
   }
 
@@ -533,7 +593,8 @@ bool EnoughSpace(const fs::path& app, uint64_t need, std::string& error) {
   std::error_code ec;
   const auto space = fs::space(app, ec);
   if (!ec && space.available < need + (256ull << 20)) {
-    error = "Not enough free space: it needs " + Gb(need) + ", the drive has " + Gb(space.available) + ".";
+    error = T("Not enough free space: it needs ", "Espaço livre insuficiente: precisa de ") + Gb(need) +
+            T(", the drive has ", ", o disco tem ") + Gb(space.available) + ".";
     return false;
   }
   return true;
@@ -762,13 +823,13 @@ Ran ByPayload(const fs::path& app, const std::string& body, std::atomic<uint64_t
         std::string mark;
         ClearJob(dir);
         if (!ReadText(Staging(app) / ".token", mark) || mark != token) {
-          error = "the installed files aren't from this install";
+          error = T("the installed files aren't from this install", "os arquivos instalados não são desta instalação");
           return Ran::kFailed;
         }
         return Ran::kDone;
       }
       if (s.phase == "failed" || s.phase == "stopped") {
-        error = s.error.empty() ? std::string("the installer payload stopped with an error") : s.error;
+        error = s.error.empty() ? std::string(T("the installer payload stopped with an error", "o payload do instalador parou com um erro")) : s.error;
         ClearJob(dir);
         return Ran::kFailed;
       }
@@ -782,13 +843,13 @@ Ran ByPayload(const fs::path& app, const std::string& body, std::atomic<uint64_t
       }
       if (now - sent > std::chrono::seconds(45)) {
         WriteText(dir / "cancel", "stop\n");
-        error = "the installer payload didn't start";
+        error = T("the installer payload didn't start", "o payload do instalador não iniciou");
         return Ran::kFailed;
       }
     }
     if (running && now - changed > std::chrono::seconds(30)) {
       WriteText(dir / "cancel", "stop\n");
-      error = "the installer payload stopped answering";
+      error = T("the installer payload stopped answering", "o payload do instalador parou de responder");
       return Ran::kFailed;
     }
   }
@@ -802,7 +863,7 @@ bool TakeStaged(const fs::path& app, const std::string& rel, const fs::path& to,
   ec.clear();
   fs::rename(Staging(app) / rel, to, ec);
   if (ec) {
-    error = "couldn't move the installed files into place (" + ec.message() + ")";
+    error = T("couldn't move the installed files into place (", "não deu para mover os arquivos instalados para o lugar (") + ec.message() + ")";
     return false;
   }
   fs::remove_all(Staging(app), ec);
@@ -832,7 +893,7 @@ std::string Where(const fs::path& app) {
   static std::string where;
   if (where.empty()) {
     const std::string folder = DriveOf(app).folder;
-    where = folder.empty() ? "the app's install folder" : folder + "/install";
+    where = folder.empty() ? T("the app's install folder", "a pasta install do app") : folder + "/install";
   }
   return where;
 }
@@ -854,11 +915,42 @@ Installed Check(const fs::path& app) {
     const fs::path d = app / "dlc" / kDlcFolders[i];
     in.dlc[i] = fs::is_directory(d, ec) && !fs::is_empty(d, ec);
   }
-  for (fs::directory_iterator x(app / "saves", ec), end; !ec && x != end; x.increment(ec)) {
-    std::error_code ec2;
-    for (fs::directory_iterator s(x->path() / "4D5307DC" / "00000001", ec2), e2; !ec2 && s != e2; s.increment(ec2))
-      if (s->is_directory(ec2)) ++in.saves;
+  // Crackdown 2
+  {
+    const fs::path game2 = app / "game2";
+    in.game2 = !FindChild(game2, "default.xex").empty();
+    const fs::path xexp2 = FindChild(game2, "default.xexp");
+    in.update2 = !xexp2.empty() && fs::file_size(xexp2, ec) == kUpdate5Xexp2Size;
+    ec.clear();
+    for (fs::directory_iterator it(app / "dlc2", ec), end; !ec && it != end; it.increment(ec)) {
+      std::error_code ec2;
+      if (it->is_directory(ec2) && it->path().extension() != ".installing" && !fs::is_empty(it->path(), ec2)) ++in.dlc2;
+    }
+    ec.clear();
   }
+  for (fs::directory_iterator x(app / "saves", ec), end; !ec && x != end; x.increment(ec))
+  for (int g = 1; g <= 2; ++g) {
+    std::error_code ec2;
+    for (fs::directory_iterator s(x->path() / (g == 2 ? "4D5308BC" : "4D5307DC") / "00000001", ec2), e2; !ec2 && s != e2; s.increment(ec2)) {
+      if (!s->is_directory(ec2) || s->path().extension() == ".installing") continue;
+      ++(g == 2 ? in.saves2 : in.saves);
+      // (its newest file's time: the folder's own changes on some drives only when files come and go)
+      int64_t newest = 0;
+      std::error_code ec3;
+      for (fs::recursive_directory_iterator f(s->path(), ec3), fe; !ec3 && f != fe; f.increment(ec3)) {
+        std::error_code ec4;
+        if (!f->is_regular_file(ec4)) continue;
+        const auto t = f->last_write_time(ec4);
+        if (ec4) continue;
+        const auto sys = std::chrono::time_point_cast<std::chrono::seconds>(
+            t - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+        newest = std::max<int64_t>(newest, sys.time_since_epoch().count());
+      }
+      in.save_list.push_back({s->path().filename().string(), newest, g});
+    }
+  }
+  std::sort(in.save_list.begin(), in.save_list.end(),
+            [](const SaveInfo& a, const SaveInfo& b) { return a.modified > b.modified; });
   return in;
 }
 
@@ -873,6 +965,11 @@ bool Classify(const fs::path& p, Source& out) {
   const std::string ext = Ext(p), file = p.filename().string();
   if (ext == ".iso" || ext == ".xiso") {
     out = {Kind::kGameImage, p, file};
+    out.game = ImageGame(p);
+    if (!out.game) {
+      out.kind = Kind::kOther;
+      out.label = file + T("  (not a Crackdown or Crackdown 2 disc)", "  (não é um disco de Crackdown ou Crackdown 2)");
+    }
     return true;
   }
   if (ext == ".7z" || ext == ".rar" || ext == ".zip" || ext == ".001" || ext == ".gz" || ext == ".tar") {
@@ -881,11 +978,21 @@ bool Classify(const fs::path& p, Source& out) {
   }
   if (!IsPackage(p)) return false;
   Header h;
-  if (!ReadHeader(p, h) || h.title != kTitleId) {
-    out = {Kind::kOther, p, file + "  (not a Crackdown package)"};
+  if (!ReadHeader(p, h) || !GameOf(h.title)) {
+    out = {Kind::kOther, p, file + T("  (not a Crackdown package)", "  (não é um pacote de Crackdown)")};
     return true;
   }
   const std::string name = Narrow(h.name);
+  if (GameOf(h.title) == 2) {
+    // Crackdown 2's: any title update (the install checks it's Title Update 5), any DLC pack, saves
+    if (h.type == kTypeUpdate) out = {Kind::kUpdate, p, name.empty() ? file : name};
+    else if (h.type == kTypeDlc) out = {Kind::kDlc, p, name.empty() ? file : name};
+    else if (h.type == kTypeSave) out = {Kind::kSave, p, name.empty() ? file : name};
+    else if (h.type == kTypeAvatarItem) out = {Kind::kOther, p, kAvatarItemLabel};
+    else out = {Kind::kOther, p, file};
+    out.game = 2;
+    return true;
+  }
   if (h.type == kTypeUpdate) {
     // "Crackdown Title Update #6"; the install checks the patch itself
     const bool other = name.find('#') != std::string::npos && name.find("#6") == std::string::npos;
@@ -896,6 +1003,8 @@ bool Classify(const fs::path& p, Source& out) {
     if (out.dlc < 0) out.kind = Kind::kOther;
   } else if (h.type == kTypeSave) {
     out = {Kind::kSave, p, name.empty() ? file : name};
+  } else if (h.type == kTypeAvatarItem) {
+    out = {Kind::kOther, p, kAvatarItemLabel};
   } else {
     out = {Kind::kOther, p, file};
   }
@@ -927,7 +1036,10 @@ std::vector<Source> Scan(const fs::path& app) {
         continue;
       }
       if (!FindChild(p, "default.xex").empty()) {
-        out.push_back({Kind::kGameFolder, p, p.filename().string() + "/"});
+        Source s{Kind::kGameFolder, p, p.filename().string() + "/"};
+        s.game = GameFolderOf(p);
+        if (!s.game) s.kind = Kind::kOther;
+        out.push_back(s);
         it.disable_recursion_pending();
       } else if (it.depth() >= 4) {
         it.disable_recursion_pending();
@@ -941,14 +1053,20 @@ std::vector<Source> Scan(const fs::path& app) {
   // and the app's own folder, for what was put there instead of install/ (its own parts aside)
   static const char* const kAppParts[] = {"game",     "dlc",           "saves",  "userdata", "install", "hub",
                                           "sce_sys",  "sce_module",    "logs",   "payloads", "game.installing",
-                                          "update.installing"};
+                                          "update.installing", "game2", "dlc2", "game2.installing",
+                                          "update2.installing", "glyphs"};
   for (fs::directory_iterator it(app, ec), end; !ec && it != end; it.increment(ec)) {
     const fs::path p = it->path();
     const std::string name = Lower(p.filename().string());
     if (std::find(std::begin(kAppParts), std::end(kAppParts), name) != std::end(kAppParts)) continue;
     std::error_code ec2;
     if (it->is_directory(ec2)) {
-      if (!FindChild(p, "default.xex").empty()) out.push_back({Kind::kGameFolder, p, p.filename().string() + "/"});
+      if (!FindChild(p, "default.xex").empty()) {
+        Source s{Kind::kGameFolder, p, p.filename().string() + "/"};
+        s.game = GameFolderOf(p);
+        if (!s.game) s.kind = Kind::kOther;
+        out.push_back(s);
+      }
       continue;
     }
     Source s;
@@ -993,7 +1111,7 @@ bool Job::Start(std::string title, F&& work) {
     try {
       ok = work(result);
     } catch (const std::exception& e) {
-      result = std::string("Failed: ") + e.what();
+      result = std::string(T("Failed: ", "Falhou: ")) + e.what();
     }
     REXLOG_INFO("Crackdown install: {} {}", ok ? "done:" : "FAILED:", result);
     {
@@ -1013,19 +1131,22 @@ bool Job::Install(const fs::path& app, const Source& source) {
   switch (source.kind) {
     case Kind::kGameImage:
     case Kind::kGameFolder:
-      return Start("Installing the game from " + source.label, [this, app, source](std::string& result) {
+      return Start((source.game == 2 ? std::string(T("Installing Crackdown 2 from ", "Instalando o Crackdown 2 de "))
+                                     : std::string(T("Installing the game from ", "Instalando o jogo de "))) + source.label,
+                   [this, app, source](std::string& result) {
         std::error_code ec;
-        const fs::path game = app / "game", tmp = app / "game.installing";
+        const std::string folder = GameFolderName(source.game);
+        const fs::path game = app / folder, tmp = app / (folder + ".installing");
         fs::remove_all(tmp, ec);
         if (source.kind == Kind::kGameImage) {
           rex::filesystem::DiscImageDevice disc("\\Device\\CdInstall", source.path);
           if (!disc.Initialize()) {
-            result = source.label + " isn't an Xbox 360 disc image.";
+            result = source.label + T(" isn't an Xbox 360 disc image.", " não é uma imagem de disco de Xbox 360.");
             return false;
           }
           rex::filesystem::Entry* root = disc.ResolvePath("");
           if (!root) {
-            result = "Couldn't read " + source.label + ".";
+            result = T("Couldn't read ", "Não deu para ler ") + source.label + ".";
             return false;
           }
           total_ = TotalSize(root);
@@ -1047,19 +1168,24 @@ bool Job::Install(const fs::path& app, const Source& source) {
             ok = Copier(done_, g_preallocate, source.path).Children(root, tmp, error);
           if (!ok) {
             fs::remove_all(tmp, ec);
-            result = "Installing from " + source.label + " failed: " + error;
+            result = T("Installing from ", "A instalação de ") + source.label + T(" failed: ", " falhou: ") + error;
             return false;
           }
         } else {
           fs::rename(source.path, tmp, ec);
           if (ec) {
-            result = "Couldn't move " + source.label + " (" + ec.message() + ").";
+            result = T("Couldn't move ", "Não deu para mover ") + source.label + " (" + ec.message() + ").";
             return false;
           }
         }
-        if (FindChild(tmp, "default.xex").empty() || FindChild(tmp, "fullcity.dff").empty()) {
+        const char* marker = source.game == 2 ? "pacificcity.dff" : "fullcity.dff";
+        if (FindChild(tmp, "default.xex").empty() || FindChild(tmp, marker).empty() || GameFolderOf(tmp) != source.game) {
           fs::remove_all(tmp, ec);
-          result = source.label + " isn't Crackdown (no default.xex and fullcity.dff in it).";
+          result = source.label + (source.game == 2
+                                       ? T(" isn't Crackdown 2 (no default.xex and PacificCity.dff in it).",
+                                           " não é o Crackdown 2 (não tem default.xex e PacificCity.dff).")
+                                       : T(" isn't Crackdown (no default.xex and fullcity.dff in it).",
+                                           " não é o Crackdown (não tem default.xex e fullcity.dff)."));
           return false;
         }
         // an installed title update stays
@@ -1070,23 +1196,25 @@ bool Job::Install(const fs::path& app, const Source& source) {
         fs::remove_all(game, ec);
         fs::rename(tmp, game, ec);
         if (ec) {
-          result = "Couldn't put the game in place (" + ec.message() + ").";
+          result = T("Couldn't put the game in place (", "Não deu para colocar o jogo no lugar (") + ec.message() + ").";
           return false;
         }
         if (source.kind == Kind::kGameImage) Keep(source.path);
-        result = "The game is installed.";
+        result = source.game == 2 ? T("Crackdown 2 is installed.", "O Crackdown 2 está instalado.")
+                                  : T("The game is installed.", "O jogo está instalado.");
         return true;
       });
     case Kind::kUpdate:
     case Kind::kOtherUpdate:
-      return Start("Installing " + source.label, [this, app, source](std::string& result) {
+      return Start(T("Installing ", "Instalando ") + source.label, [this, app, source](std::string& result) {
         std::error_code ec;
-        const fs::path tmp = app / "update.installing", game = app / "game";
+        const bool cd2 = source.game == 2;
+        const fs::path tmp = app / (cd2 ? "update2.installing" : "update.installing"), game = app / GameFolderName(source.game);
         fs::remove_all(tmp, ec);
         rex::filesystem::StfsContainerDevice package("\\Device\\CdUpdate", source.path);
         rex::filesystem::Entry* root = package.Initialize() ? package.ResolvePath("") : nullptr;
         if (!root) {
-          result = "Couldn't read " + source.label + ".";
+          result = T("Couldn't read ", "Não deu para ler ") + source.label + ".";
           return false;
         }
         total_ = TotalSize(root);
@@ -1094,13 +1222,16 @@ bool Job::Install(const fs::path& app, const Source& source) {
         const Ran ran = PackageByPayload(app, source.path, "update", total_, tmp, done_, total_, error);
         if (ran == Ran::kFailed || (ran == Ran::kUnavailable && !Copier(done_, g_preallocate).Children(root, tmp, error))) {
           fs::remove_all(tmp, ec);
-          result = "Installing " + source.label + " failed: " + error;
+          result = T("Installing ", "A instalação de ") + source.label + T(" failed: ", " falhou: ") + error;
           return false;
         }
         const fs::path xexp = FindChild(tmp, "default.xexp");
-        if (xexp.empty() || fs::file_size(xexp, ec) != kUpdate6XexpSize) {
+        if (xexp.empty() || fs::file_size(xexp, ec) != (cd2 ? kUpdate5Xexp2Size : kUpdate6XexpSize)) {
           fs::remove_all(tmp, ec);
-          result = source.label + " isn't Title Update 6, which Crackdown: ReActivated needs.";
+          result = source.label + (cd2 ? T(" isn't Crackdown 2's Title Update 5, which Crackdown: ReActivated needs.",
+                                           " não é a Title Update 5 do Crackdown 2, de que o Crackdown: ReActivated precisa.")
+                                       : T(" isn't Title Update 6, which Crackdown: ReActivated needs.",
+                                           " não é a Title Update 6, de que o Crackdown: ReActivated precisa."));
           return false;
         }
         fs::create_directories(game, ec);
@@ -1110,15 +1241,17 @@ bool Job::Install(const fs::path& app, const Source& source) {
         fs::remove_all(game / "update", ec);
         fs::rename(tmp, game / "update", ec);
         if (ec) {
-          result = "Couldn't put Title Update 6 in place (" + ec.message() + ").";
+          result = T("Couldn't put the title update in place (", "Não deu para colocar a title update no lugar (") + ec.message() + ").";
           return false;
         }
         Keep(source.path);
-        result = "Title Update 6 is installed.";
+        result = cd2 ? T("Crackdown 2's Title Update 5 is installed.", "A Title Update 5 do Crackdown 2 está instalada.")
+                     : T("Title Update 6 is installed.", "A Title Update 6 está instalada.");
         return true;
       });
     case Kind::kDlc:
-      return Start(std::string("Installing the ") + DlcName(source.dlc), [this, app, source](std::string& result) {
+      if (source.game == 2) return InstallDlc2(app, source);
+      return Start(std::string(T("Installing the ", "Instalando o ")) + DlcName(source.dlc), [this, app, source](std::string& result) {
         std::error_code ec;
         const fs::path dest = app / "dlc" / kDlcFolders[source.dlc];
         const fs::path tmp = dest.string() + ".installing";
@@ -1126,7 +1259,7 @@ bool Job::Install(const fs::path& app, const Source& source) {
         rex::filesystem::StfsContainerDevice package("\\Device\\CdDlc", source.path);
         rex::filesystem::Entry* root = package.Initialize() ? package.ResolvePath("") : nullptr;
         if (!root) {
-          result = "Couldn't read " + source.label + ".";
+          result = T("Couldn't read ", "Não deu para ler ") + source.label + ".";
           return false;
         }
         total_ = TotalSize(root);
@@ -1136,39 +1269,40 @@ bool Job::Install(const fs::path& app, const Source& source) {
                                          done_, total_, error);
         if (ran == Ran::kFailed || (ran == Ran::kUnavailable && !Copier(done_, g_preallocate).Children(root, tmp, error))) {
           fs::remove_all(tmp, ec);
-          result = "Installing the " + std::string(DlcName(source.dlc)) + " failed: " + error;
+          result = T("Installing the ", "A instalação do ") + std::string(DlcName(source.dlc)) + T(" failed: ", " falhou: ") + error;
           return false;
         }
         fs::remove_all(dest, ec);
         fs::rename(tmp, dest, ec);
         if (ec) {
-          result = "Couldn't put the DLC in place (" + ec.message() + ").";
+          result = T("Couldn't put the DLC in place (", "Não deu para colocar a DLC no lugar (") + ec.message() + ").";
           return false;
         }
         Keep(source.path);
-        result = std::string("The ") + DlcName(source.dlc) + " is installed.";
+        result = std::string(T("The ", "O ")) + DlcName(source.dlc) + T(" is installed.", " está instalado.");
         return true;
       });
     case Kind::kSave:
-      return Start("Importing the save " + source.label, [this, app, source](std::string& result) {
+      return Start(T("Importing the save ", "Importando o save ") + source.label, [this, app, source](std::string& result) {
         std::error_code ec;
         // (into the profile when the game starts: AdoptImportedSaves; named as the game looks for it)
-        const std::string name = kSaveName;
-        const fs::path title = app / "saves" / kImportFolder / "4D5307DC";
+        // (Crackdown 2's keeps the package's own name)
+        const std::string name = source.game == 2 ? source.path.filename().string() : std::string(kSaveName);
+        const fs::path title = app / "saves" / kImportFolder / (source.game == 2 ? "4D5308BC" : "4D5307DC");
         const fs::path dest = title / "00000001" / name, tmp = dest.string() + ".installing";
         fs::remove_all(tmp, ec);
         rex::filesystem::StfsContainerDevice package("\\Device\\CdSave", source.path);
         rex::filesystem::Entry* root = package.Initialize() ? package.ResolvePath("") : nullptr;
         Header h;
         if (!root || !ReadHeader(source.path, h)) {
-          result = "Couldn't read the save " + source.label + ".";
+          result = T("Couldn't read the save ", "Não deu para ler o save ") + source.label + ".";
           return false;
         }
         total_ = TotalSize(root);
         std::string error;
         if (!Copier(done_, g_preallocate).Children(root, tmp, error)) {
           fs::remove_all(tmp, ec);
-          result = "Importing " + source.label + " failed: " + error;
+          result = T("Importing ", "A importação de ") + source.label + T(" failed: ", " falhou: ") + error;
           return false;
         }
         fs::remove_all(dest, ec);
@@ -1181,30 +1315,31 @@ bool Job::Install(const fs::path& app, const Source& source) {
         data.set_display_name(h.name);
         data.set_file_name(name);
         data.xuid = 0;  // (as the runtime writes its own: the folder says whose it is)
-        data.title_id = kTitleId;
+        data.title_id = source.game == 2 ? kTitleId2 : kTitleId;
         const fs::path headers = title / "Headers" / "00000001";
         fs::create_directories(headers, ec);
         std::ofstream(headers / (name + ".header"), std::ios::binary)
             .write(reinterpret_cast<const char*>(&data), sizeof(data));
         Keep(source.path);
-        result = "Imported the save " + source.label + ". The game loads it when you PLAY.";
+        result = T("Imported the save ", "Save importado: ") + source.label +
+                 T(". The game loads it when you PLAY.", ". O jogo o carrega quando você JOGAR.");
         return true;
       });
     case Kind::kBackup:
-      return Start("Restoring " + source.label, [app, source](std::string& result) {
+      return Start(T("Restoring ", "Restaurando ") + source.label, [app, source](std::string& result) {
         std::error_code ec;
         const auto options = fs::copy_options::recursive | fs::copy_options::overwrite_existing;
         for (const char* what : {"saves", "UserData"}) {
           if (!fs::exists(source.path / what, ec)) continue;
           fs::copy(source.path / what, app / what, options, ec);
           if (ec) {
-            result = "Restoring " + source.label + " failed (" + ec.message() + ").";
+            result = T("Restoring ", "A restauração de ") + source.label + T(" failed (", " falhou (") + ec.message() + ").";
             return false;
           }
         }
         if (fs::exists(source.path / "menu.ini", ec))
           fs::copy_file(source.path / "menu.ini", app / "menu.ini", fs::copy_options::overwrite_existing, ec);
-        result = "Restored the backup " + source.label + ".";
+        result = T("Restored the backup ", "Backup restaurado: ") + source.label + ".";
         return true;
       });
     default:
@@ -1212,11 +1347,51 @@ bool Job::Install(const fs::path& app, const Source& source) {
   }
 }
 
+bool Job::InstallDlc2(const fs::path& app, const Source& source) {
+  return Start(std::string(T("Installing Crackdown 2's ", "Instalando a DLC do Crackdown 2 ")) + source.label,
+               [this, app, source](std::string& result) {
+    std::error_code ec;
+    // (named as on the Xbox 360: the package's own name, the folder the runtime finds it in)
+    const std::string folder = source.path.filename().string();
+    const fs::path dest = app / "dlc2" / folder;
+    const fs::path tmp = dest.string() + ".installing";
+    fs::remove_all(tmp, ec);
+    rex::filesystem::StfsContainerDevice package("\\Device\\CdDlc", source.path);
+    rex::filesystem::Entry* root = package.Initialize() ? package.ResolvePath("") : nullptr;
+    if (!root) {
+      result = T("Couldn't read ", "Não deu para ler ") + source.label + ".";
+      return false;
+    }
+    total_ = TotalSize(root);
+    std::string error;
+    if (!EnoughSpace(app, total_, result)) return false;
+    const Ran ran = PackageByPayload(app, source.path, "dlc2/" + folder, total_, tmp, done_, total_, error);
+    if (ran == Ran::kFailed || (ran == Ran::kUnavailable && !Copier(done_, g_preallocate).Children(root, tmp, error))) {
+      fs::remove_all(tmp, ec);
+      result = T("Installing ", "A instalação de ") + source.label + T(" failed: ", " falhou: ") + error;
+      return false;
+    }
+    fs::remove_all(dest, ec);
+    fs::create_directories(dest.parent_path(), ec);
+    fs::rename(tmp, dest, ec);
+    if (ec) {
+      result = T("Couldn't put the DLC in place (", "Não deu para colocar a DLC no lugar (") + ec.message() + ").";
+      return false;
+    }
+    Keep(source.path);
+    result = source.label + T(" is installed.", " está instalada.");
+    return true;
+  });
+}
+
 bool Job::Uninstall(const fs::path& app, Remove what) {
-  const char* name = what == Remove::kGame     ? "the game"
-                     : what == Remove::kUpdate ? "Title Update 6"
-                                               : DlcName(what == Remove::kDlc0 ? 0 : 1);
-  return Start(std::string("Removing ") + name, [app, what, name](std::string& result) {
+  const char* name = what == Remove::kGame      ? T("the game", "o jogo")
+                     : what == Remove::kUpdate  ? "Title Update 6"
+                     : what == Remove::kGame2   ? "Crackdown 2"
+                     : what == Remove::kUpdate2 ? T("Crackdown 2's Title Update 5", "a Title Update 5 do Crackdown 2")
+                     : what == Remove::kDlc2    ? T("Crackdown 2's DLC", "as DLCs do Crackdown 2")
+                                                : DlcName(what == Remove::kDlc0 ? 0 : 1);
+  return Start(std::string(T("Removing ", "Removendo ")) + name, [app, what, name](std::string& result) {
     std::error_code ec;
     const fs::path game = app / "game";
     switch (what) {
@@ -1228,17 +1403,28 @@ bool Job::Uninstall(const fs::path& app, Remove what) {
         fs::remove(game / "Default.xexp", ec);
         fs::remove_all(game / "update", ec);
         break;
+      case Remove::kGame2:
+        fs::remove_all(app / "game2", ec);
+        break;
+      case Remove::kUpdate2:
+        fs::remove(app / "game2" / "default.xexp", ec);
+        fs::remove(app / "game2" / "Default.xexp", ec);
+        fs::remove_all(app / "game2" / "update", ec);
+        break;
+      case Remove::kDlc2:
+        fs::remove_all(app / "dlc2", ec);
+        break;
       default:
         fs::remove_all(app / "dlc" / kDlcFolders[what == Remove::kDlc0 ? 0 : 1], ec);
         break;
     }
-    result = std::string("Removed ") + name + ".";
+    result = std::string(T("Removed ", "Removido: ")) + name + ".";
     return !ec;
   });
 }
 
 bool Job::Backup(const fs::path& app) {
-  return Start("Backing up the saves", [app](std::string& result) {
+  return Start(T("Backing up the saves", "Fazendo backup dos saves"), [app](std::string& result) {
     char stamp[32];
     const std::time_t now = std::time(nullptr);
     std::strftime(stamp, sizeof(stamp), "%Y-%m-%d_%H-%M-%S", std::localtime(&now));
@@ -1247,19 +1433,21 @@ bool Job::Backup(const fs::path& app) {
     fs::create_directories(dest, ec);
     const auto options = fs::copy_options::recursive | fs::copy_options::overwrite_existing;
     if (fs::exists(app / "saves", ec)) fs::copy(app / "saves", dest / "saves", options, ec);
-    const fs::path trophies = app / "UserData" / "crackdown" / "achievements";
-    if (!ec && fs::exists(trophies, ec)) {
-      fs::create_directories(dest / "UserData" / "crackdown", ec);
-      fs::copy(trophies, dest / "UserData" / "crackdown" / "achievements", options, ec);
+    for (const char* user : {"crackdown", "crackdown2"}) {
+      const fs::path trophies = app / "UserData" / user / "achievements";
+      if (!ec && fs::exists(trophies, ec)) {
+        fs::create_directories(dest / "UserData" / user, ec);
+        fs::copy(trophies, dest / "UserData" / user / "achievements", options, ec);
+      }
     }
     if (!ec && fs::exists(app / "menu.ini", ec)) fs::copy_file(app / "menu.ini", dest / "menu.ini", ec);
     if (ec) {
-      result = "The backup failed (" + ec.message() + ").";
+      result = T("The backup failed (", "O backup falhou (") + ec.message() + ").";
       return false;
     }
     std::ofstream(dest / kBackupMarker) << "Crackdown: ReActivated backup: saves/, trophies (UserData/) and menu.ini.\n"
                                            "Restore it from the menu's SAVES page.\n";
-    result = "Backed up to install/backups/" + dest.filename().string() + ".";
+    result = T("Backed up to install/backups/", "Backup feito em install/backups/") + dest.filename().string() + ".";
     return true;
   });
 }
@@ -1282,7 +1470,8 @@ void Job::ForgetLeftovers() {
 bool Job::DeleteLeftovers() {
   const std::vector<fs::path> files = Leftovers();
   if (files.empty()) return false;
-  return Start(files.size() == 1 ? "Deleting " + files[0].filename().string() : "Deleting the installed files",
+  return Start(files.size() == 1 ? T("Deleting ", "Apagando ") + files[0].filename().string()
+                                 : std::string(T("Deleting the installed files", "Apagando os arquivos já instalados")),
                [this, files](std::string& result) {
                  total_ = files.size();
                  for (const fs::path& f : files) {
@@ -1290,8 +1479,10 @@ bool Job::DeleteLeftovers() {
                    ++done_;
                  }
                  ForgetLeftovers();
-                 result = files.size() == 1 ? "Deleted " + files[0].filename().string() + "."
-                                            : "Deleted the " + std::to_string(files.size()) + " installed files.";
+                 result = files.size() == 1
+                              ? T("Deleted ", "Apagado: ") + files[0].filename().string() + "."
+                              : T("Deleted the ", "Apagados os ") + std::to_string(files.size()) +
+                                    T(" installed files.", " arquivos já instalados.");
                  return true;
                });
 }
@@ -1301,16 +1492,17 @@ void AdoptImportedSaves(const fs::path& saves, uint64_t xuid) {
   std::snprintf(own, sizeof(own), "%016llX", static_cast<unsigned long long>(xuid));
   std::vector<std::string> from = {kImportFolder};
   if (std::string(own) != kOldDefaultXuid) from.push_back(kOldDefaultXuid);
-  for (const std::string& folder : from) {
-    const fs::path src = saves / folder / "4D5307DC";
+  for (const std::string& folder : from)
+  for (const char* title_folder : {"4D5307DC", "4D5308BC"}) {
+    const fs::path src = saves / folder / title_folder;
     std::error_code ec;
     for (fs::directory_iterator it(src / "00000001", ec), end; !ec && it != end; it.increment(ec)) {
       std::error_code ec2;
       const std::string name = it->path().filename().string();
       if (!it->is_directory(ec2) || name.ends_with(".installing")) continue;
-      const fs::path dest = saves / own / "4D5307DC" / "00000001" / name;
+      const fs::path dest = saves / own / title_folder / "00000001" / name;
       const fs::path header = src / "Headers" / "00000001" / (name + ".header");
-      const fs::path dest_header = saves / own / "4D5307DC" / "Headers" / "00000001" / (name + ".header");
+      const fs::path dest_header = saves / own / title_folder / "Headers" / "00000001" / (name + ".header");
       // (an import replaces the profile's save of that name: that's what importing it asks for)
       fs::remove_all(dest, ec2);
       fs::create_directories(dest.parent_path(), ec2);

@@ -1,0 +1,28 @@
+From 649592e60571387df2130315618e07b38612f786 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:32 -0500
+Subject: [PATCH 003/122] 0102-server-user-shared-data-fills-a-host-page.patch
+
+---
+ server/mapping.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/server/mapping.c b/server/mapping.c
+index 7446c70..65bebaa 100644
+--- a/server/mapping.c
++++ b/server/mapping.c
+@@ -1489,7 +1489,10 @@ struct object *create_user_data_mapping( struct object *root, struct unicode_str
+ {
+     void *ptr;
+     struct mapping *mapping;
+-    struct mapping_init_data data = { .size = sizeof(KUSER_SHARED_DATA), .flags = SEC_COMMIT,
++    /* a whole host page: with pages larger than 4k the page also holds the
++     * syscall dispatcher pointer that follows the structure at 0x7ffe1000 */
++    struct mapping_init_data data = { .size = round_size( sizeof(KUSER_SHARED_DATA), host_page_mask ),
++                                      .flags = SEC_COMMIT,
+                                       .file_access = FILE_READ_DATA | FILE_WRITE_DATA };
+     struct object_params params = { .ops = &mapping_ops, .root = root, .name = name,
+                                     .attr = attr, .sd = sd, .init_data = &data };
+-- 
+2.43.0
+

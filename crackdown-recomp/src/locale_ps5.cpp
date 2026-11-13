@@ -8,9 +8,12 @@
 // reach. Here sub_823C1188 is given crackdown_locale instead, when it is set:
 //
 //   0 en-US   1 fr-FR   2 it-IT   3 de-DE   4 es-ES   5 es-LA   6 cs-CZ
-//   7 pl-PL   8 hu-HU   9 ja-JP  10 ko-KR  11 zh-TW  13 sk-SK
+//   7 pl-PL   8 hu-HU   9 ja-JP  10 ko-KR  11 zh-TW  13 sk-SK  15 pt-BR
 //
 // Title Update 6 adds no languages: its update/Local has these same 13 folders (the DLC's text).
+// The title's folder table (sub_823C12E0, names at 0x820A4194) also has 12 xx-XX, 14 ru-RU and
+// 15 pt-BR, which no disc has: Portuguese (Brazil) is ours, a translated pt-BR folder installed
+// into game/Local and game/update/Local (the menu gives 15 only once it's there).
 
 #include <cstdint>
 
@@ -20,7 +23,7 @@
 #include <rex/ppc.h>
 
 REXCVAR_DEFINE_INT32(crackdown_locale, -1, "Crackdown",
-                     "The game's text folder (-1: the title's own choice; 0 en-US ... 13 sk-SK)");
+                     "The game's text folder (-1: the title's own choice; 0 en-US ... 13 sk-SK, 15 pt-BR)");
 
 REX_EXTERN(__imp__sub_823C1188);
 
@@ -28,6 +31,6 @@ REX_HOOK_RAW(sub_823C1188) {
   const int32_t locale = REXCVAR_GET(crackdown_locale);
   REXLOG_INFO("Crackdown: the title picked text folder {}, using {}", ctx.r3.u32,
               locale >= 0 ? uint32_t(locale) : ctx.r3.u32);
-  if (locale >= 0 && locale <= 13 && locale != 12) ctx.r3.u64 = uint32_t(locale);
+  if ((locale >= 0 && locale <= 13 && locale != 12) || locale == 15) ctx.r3.u64 = uint32_t(locale);
   __imp__sub_823C1188(ctx, base);
 }

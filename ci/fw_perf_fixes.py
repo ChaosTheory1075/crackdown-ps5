@@ -2136,3 +2136,358 @@ edit("src/kernel/xboxkrnl/xboxkrnl_video.cpp", """  if (!rex::cvar::HasNonDefaul
      """  if (false) {  // [crackdown] (video_mode_height, 720 unless set: not the display's size)
     if (rex::cvar::HasNonDefaultValue("window_height") && REXCVAR_GET(window_height) > 0) {""")
 print("video mode: the guest is told 1280x720, not the display's size")
+
+# Saints Row: ReInstated's menu settings (Max Payne 3 RePrescribed's 1.0.5): FSR 1 upscaling and SMAA.
+# The graphics system (its presenter), for the app: the menu's UPSCALING setting goes to the presenter,
+# which took present_effect at its start, before the menu (crackdown_app.cpp).
+edit("include/rex/rex_app.h", "  ui::Window* window() const { return window_.get(); }\n",
+     "  ui::Window* window() const { return window_.get(); }\n"
+     "  system::IGraphicsSystem* graphics_system() const { return config_.graphics.get(); }  // [mp3]\n")
+# SMAA 1x as a swap post effect (swap_post_effect smaa: ci/fw-files/src/graphics/vulkan/mp3_smaa.cpp).
+# It runs where FXAA does, on the same source image, before the presenter's upscaling (FSR 1): SMAA
+# cleans the edges with less blur than FXAA. FXAA stays the fallback.
+files = Path(__file__).resolve().parent / "fw-files"
+for f in sorted(files.rglob("*")):
+    if f.is_file():
+        dst = fw / sdk / f.relative_to(files)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(f.read_bytes())
+        print(f"copied   {f.relative_to(files)}")
+edit("include/rex/graphics/command_processor.h", "    kFxaaExtreme,\n  };\n",
+     "    kFxaaExtreme,\n    kSmaa,  // [mp3]\n  };\n")
+edit("src/graphics/graphics_system.cpp", "    .allowed({\"none\", \"fxaa\", \"fxaa_extreme\"})\n",
+     "    .allowed({\"none\", \"fxaa\", \"fxaa_extreme\", \"smaa\"})  // [mp3]\n")
+edit("src/graphics/graphics_system.cpp", "  if (lowered == \"fxaa_extreme\" || lowered == \"extreme\") {\n",
+     "  if (lowered == \"smaa\") {  // [mp3]\n"
+     "    return rex::graphics::CommandProcessor::SwapPostEffect::kSmaa;\n"
+     "  }\n"
+     "  if (lowered == \"fxaa_extreme\" || lowered == \"extreme\") {\n")
+edit("include/rex/graphics/vulkan/command_processor.h", "  void BindExternalComputePipeline(VkPipeline pipeline);\n",
+     "  void BindExternalComputePipeline(VkPipeline pipeline);\n"
+     "  // [mp3] SMAA (mp3_smaa.cpp): false if unavailable (FXAA then).\n"
+     "  bool Mp3SmaaRecord(VkImageView color_view, VkImage dest_image, VkImageView dest_view,\n"
+     "                     uint32_t width, uint32_t height, uint32_t frame_index);\n"
+     "  bool Mp3SmaaInitialize();\n"
+     "  void Mp3SmaaShutdown();\n")
+edit("include/rex/graphics/vulkan/command_processor.h",
+     "  VkImageLayout swap_fxaa_source_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;\n",
+     "  VkImageLayout swap_fxaa_source_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;\n"
+     "  struct Mp3Smaa;\n"
+     "  Mp3Smaa* mp3_smaa_ = nullptr;  // [mp3] created on first use\n")
+edit("src/graphics/vulkan/command_processor.cpp",
+     "        bool use_fxaa = swap_post_effect == SwapPostEffect::kFxaa ||\n"
+     "                        swap_post_effect == SwapPostEffect::kFxaaExtreme;\n",
+     "        bool use_fxaa = swap_post_effect == SwapPostEffect::kFxaa ||\n"
+     "                        swap_post_effect == SwapPostEffect::kFxaaExtreme ||\n"
+     "                        swap_post_effect == SwapPostEffect::kSmaa;  // [mp3] FXAA's source image\n")
+edit("src/graphics/vulkan/command_processor.cpp",
+     "            BindExternalComputePipeline(swap_post_effect == SwapPostEffect::kFxaaExtreme\n"
+     "                                            ? swap_fxaa_extreme_pipeline_\n"
+     "                                            : swap_fxaa_pipeline_);\n"
+     "            deferred_command_buffer_.CmdVkDispatch(group_count_x, group_count_y, 1);\n",
+     "            if (swap_post_effect != SwapPostEffect::kSmaa ||\n"
+     "                !Mp3SmaaRecord(swap_fxaa_source_image_view_, vulkan_context.image(),\n"
+     "                               vulkan_context.image_view(), guest_output_width,\n"
+     "                               guest_output_height, swap_frame_index)) {  // [mp3]\n"
+     "              BindExternalComputePipeline(swap_post_effect == SwapPostEffect::kFxaaExtreme\n"
+     "                                              ? swap_fxaa_extreme_pipeline_\n"
+     "                                              : swap_fxaa_pipeline_);\n"
+     "              deferred_command_buffer_.CmdVkDispatch(group_count_x, group_count_y, 1);\n"
+     "            }\n")
+edit("src/graphics/vulkan/command_processor.cpp",
+     "void VulkanCommandProcessor::ShutdownContext() {\n"
+     "  GpuLane::Get().Drain();  // [crackdown]\n"
+     "  AwaitAllQueueOperationsCompletion();\n",
+     "void VulkanCommandProcessor::ShutdownContext() {\n"
+     "  GpuLane::Get().Drain();  // [crackdown]\n"
+     "  AwaitAllQueueOperationsCompletion();\n"
+     "  Mp3SmaaShutdown();  // [mp3]\n")
+edit("src/graphics/CMakeLists.txt", "    vulkan/texture_cache.cpp\n",
+     "    vulkan/texture_cache.cpp\n    vulkan/mp3_smaa.cpp\n")
+print("menu: FSR 1 upscaling (the presenter for the app) and SMAA 1x")
+
+# The codegen, for Crackdown 2's analysis (Saints Row: ReInstated's): REX_DUMP_IMAGE=<file> writes the loaded
+# (decrypted, patched) image for tools/find_missed_entries2.py, peek_entries.py and mark_share_registers.py.
+edit("src/codegen/binary_view.cpp", "  return view;\n}\n",
+     "  if (const char* dump = std::getenv(\"REX_DUMP_IMAGE\")) {  // [cd2]\n"
+     "    if (std::FILE* f = std::fopen(dump, \"wb\")) {\n"
+     "      for (const auto& s : view.sections_) {\n"
+     "        if (!s.data || s.baseAddress < view.baseAddress_) continue;\n"
+     "        std::fseek(f, long(s.baseAddress - view.baseAddress_), SEEK_SET);\n"
+     "        std::fwrite(s.data, 1, s.size, f);\n"
+     "      }\n"
+     "      std::fclose(f);\n"
+     "    }\n"
+     "  }\n"
+     "  return view;\n}\n")
+edit("src/codegen/binary_view.cpp", "#include <limits>\n", "#include <cstdio>\n#include <cstdlib>\n#include <limits>\n")
+# dcbz clears the Xbox 360's whole 128-byte cache line (Xenia Canary 72ce130; PROTOTYPE: ReEvolution's and
+# Saints Row: ReInstated's codegen), but only where the codegen is run with REX_DCBZ128=1 (Crackdown 2):
+# Crackdown 1's generated code stays as it has always been.
+edit("src/codegen/builders/system.cpp", """bool build_dcbz(BuilderContext& ctx) {
+  // Compute EA, align to 32-byte cache line, apply physical offset
+""", """bool build_dcbzl(BuilderContext& ctx);
+
+bool build_dcbz(BuilderContext& ctx) {
+  static const bool line128 = std::getenv("REX_DCBZ128") != nullptr;  // [cd2]
+  if (line128) return build_dcbzl(ctx);
+  // Compute EA, align to 32-byte cache line, apply physical offset
+""")
+print("codegen: REX_DUMP_IMAGE, REX_DCBZ128")
+
+# A SIGILL (the recompiler's __builtin_trap: a switch value past the cases it saw, a jump to 0) gets the
+# same [ps5 crash] line as a fault (The Darkness: ReIncarnated's edit). Without it, Crackdown 2's
+# under-read switch at 0x82516C20 ended the game during the intro movie with nothing in the log.
+edit("src/core/exception_handler_posix.cpp",
+     "  if (signal_number == SIGSEGV || signal_number == SIGBUS) {\n",
+     "  if (signal_number == SIGSEGV || signal_number == SIGBUS || signal_number == SIGILL) {  // [cd] SIGILL too\n")
+print("crash report: SIGILL")
+
+# Crackdown 2 offline, as Xenia Canary (The Darkness: ReIncarnated's edits, verbatim; same GTA IV
+# session / XNet code here).
+# XamContentCreate's async task kept the root name as a string_view into guest memory and read it when
+# the overlapped work ran: Crackdown 2's DLC mounted as "    :" (dlc0:\ not found) and the host task
+# threw 'Invalid UTF-8' on the title screen (crackdown2_004.log). The name is copied when the call is made.
+edit("src/kernel/xam/xam_content.cpp",
+     "  auto run = [content_manager, xuid, root_name = root_name.value(), flags, content_data,\n",
+     "  auto run = [content_manager, xuid, root_name = std::string(root_name.value()), flags, content_data,  // [cd2]\n")
+# Offline XSessions as Canary has them (xgi_app.cc): a session without LIVE features (presence, stats,
+# matchmaking, arbitration) is created; one with them gets X_ONLINE_E_SESSION_NOT_LOGGED_ON; delete, join,
+# leave, start, end and modify succeed. The GTA IV code refused every one with no LIVE, which sent The
+# Darkness II's single player (a local session host) back to its menu. Sessions are logged.
+edit("src/kernel/xam/apps/xgi_app.cpp",
+     "  auto buffer = buffer_ptr ? memory_->TranslateVirtual(buffer_ptr) : nullptr;\n"
+     "  switch (message) {\n",
+     "  auto buffer = buffer_ptr ? memory_->TranslateVirtual(buffer_ptr) : nullptr;\n"
+     "  if (message >= 0x000B0010 && message <= 0x000B0018) {  // [cd2] offline sessions\n"
+     "    auto* cd_live = kernel_state_->live_compatibility();\n"
+     "    if (!cd_live || !cd_live->available()) {\n"
+     "      const uint32_t flags = buffer && buffer_length != 0 && message == 0x000B0010\n"
+     "                                 ? rex::memory::load_and_swap<uint32_t>(buffer + 4)\n"
+     "                                 : 0;\n"
+     "      const bool live_features = message == 0x000B0010 && flags && (flags & 0x1E);\n"
+     "      static std::atomic<int> cd_logged{0};\n"
+     "      if (cd_logged.fetch_add(1) < 60)\n"
+     "        REXKRNL_INFO(\"cd: offline XGI session message {:08X} (flags {:08X}): {}\", message, flags,\n"
+     "                     live_features ? \"needs LIVE, refused\" : \"ok\");\n"
+     "      if (message == 0x000B0016) return X_HRESULT_FROM_WIN32(X_ERROR_NOT_LOGGED_ON);  // (search)\n"
+     "      return live_features ? X_HRESULT(0x80155209) : X_E_SUCCESS;\n"
+     "    }\n"
+     "  }\n"
+     "  switch (message) {\n")
+# Offline XNet as Canary answers it: connect status IDLE, XNetServerToInAddr / XNetConnect succeed, a
+# loopback XNADDR with a non-zero MAC.
+net = "src/kernel/xam/xam_net.cpp"
+edit(net,
+     "  if (!live || !live->available()) {\n"
+     "    return XNET_CONNECT_STATUS_LOST;\n"
+     "  }\n",
+     "  if (!live || !live->available()) {\n"
+     "    return live && live->signed_in() ? XNET_CONNECT_STATUS_LOST : XNET_CONNECT_STATUS_IDLE;  // [cd2]\n"
+     "  }\n")
+edit(net,
+     "  if (!live || !live->available()) {\n"
+     "    return 0x276D;  // WSANOTINITIALISED\n"
+     "  }\n"
+     "  return live->FindRoute(htonl(guest_in_addr)) ? X_ERROR_SUCCESS : 0x2726;  // WSAEINVAL\n",
+     "  if (!live || !live->available()) {\n"
+     "    return live && live->signed_in() ? 0x276D : X_ERROR_SUCCESS;  // [cd2] (offline: as Canary)\n"
+     "  }\n"
+     "  return live->FindRoute(htonl(guest_in_addr)) ? X_ERROR_SUCCESS : 0x2726;  // WSAEINVAL\n")
+edit(net,
+     "  if (!live || !live->available()) {\n"
+     "    return 0x276D;  // WSANOTINITIALISED\n"
+     "  }\n"
+     "  if (!server_addr || !service_id || !in_addr_ptr) {\n",
+     "  if ((!live || !live->available()) && live && live->signed_in()) {  // [cd2] (offline: as Canary)\n"
+     "    return 0x276D;  // WSANOTINITIALISED\n"
+     "  }\n"
+     "  if (!server_addr || !service_id || !in_addr_ptr) {\n")
+edit(net,
+     "  if (!live || !live->signed_in()) {\n"
+     "    return XnAddrStatus::XNET_GET_XNADDR_NONE;\n"
+     "  }\n",
+     "  if (!live || !live->signed_in()) {\n"
+     "    // [cd2] offline: Canary's loopback address and a non-zero MAC\n"
+     "    addr_ptr->ina.s_addr = htonl(0x7F000001u);\n"
+     "    std::memset(addr_ptr->abEnet, 0xCC, 6);\n"
+     "    return XnAddrStatus::XNET_GET_XNADDR_STATIC;\n"
+     "  }\n")
+print("offline: XamContentCreate root name, XGI sessions, XNet (Canary's answers)")
+
+# "Memexport done to an unresearched format" was logged on every draw that exports (Crackdown 2's
+# particles and effects: 26,000 lines in two minutes, up to 5,800 in 10 s, and the game fell to 2 fps
+# whenever they were on screen, crackdown2_005.log). Once per format is enough.
+edit("src/graphics/util/draw.cpp",
+     """      case xenos::ColorFormat::k_8_8_8_8_A:
+        REXGPU_WARN(
+""",
+     """      case xenos::ColorFormat::k_8_8_8_8_A: {
+        static std::atomic<uint32_t> cd_logged_formats{0};  // [cd2] once per format
+        const uint32_t bit = 1u << (uint32_t(stream.format) & 31);
+        if (cd_logged_formats.fetch_or(bit) & bit) break;
+        REXGPU_WARN(
+""")
+edit("src/graphics/util/draw.cpp",
+     """            "Xenia developers!",
+            format_info.name);
+        break;
+      default:
+""",
+     """            "Xenia developers!",
+            format_info.name);
+        break;
+      }
+      default:
+""")
+print("gpu: memexport format warning once per format")
+
+# Crackdown 2's LANGUAGE (crackdown2_locale, defined by cd2.bin only: Crackdown 1 picks its folder in the
+# game, locale_ps5.cpp). Crackdown 2 reads its text, fonts and speech from game:\Local\<xx-XX>\ and
+# update:\Local\<xx-XX>\ for the language it works out itself (no XGetLocale: Czech, Hungarian and Slovak
+# were out of reach). A file opened there is read from the menu's folder instead when that folder has
+# it, the game's own otherwise (cs-CZ, hu-HU, sk-SK, ko-KR and zh-TW have text and fonts only: their
+# speech stays English, as on the Xbox 360).
+io = "src/kernel/xboxkrnl/xboxkrnl_io.cpp"
+edit(io, "#include <rex/filesystem/device.h>\n", "#include <cctype>\n#include <rex/cvar.h>\n#include <rex/filesystem/device.h>\n")
+edit(io,
+     "u32 NtCreateFile_entry(mapped_u32 handle_out, u32 desired_access,\n",
+     "namespace {\n"
+     "// [cd2] path with its \\Local\\<xx-XX>\\ folder swapped for crackdown2_locale's (empty: not one, or\n"
+     "// the same). Looked up by name: Crackdown 1 and the host codegen tool don't define it.\n"
+     "std::string CdLocalePath(const std::string& path, uint32_t disposition, uint32_t options) {\n"
+     "  if (disposition != 1 /* FILE_OPEN */ || (options & 0x1 /* FILE_DIRECTORY_FILE */)) return {};\n"
+     "  const std::string want = rex::cvar::GetFlagByName(\"crackdown2_locale\");\n"
+     "  if (want.size() != 5) return {};\n"
+     "  std::string lower(path);\n"
+     "  for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));\n"
+     "  const size_t at = lower.find(\"\\\\local\\\\\");\n"
+     "  if (at == std::string::npos) return {};\n"
+     "  const size_t folder = at + 7;\n"
+     "  if (lower.size() < folder + 6 || lower[folder + 2] != '-' || lower[folder + 5] != '\\\\') return {};\n"
+     "  std::string want_lower(want);\n"
+     "  for (char& c : want_lower) c = char(std::tolower(static_cast<unsigned char>(c)));\n"
+     "  if (lower.compare(folder, 5, want_lower) == 0) return {};\n"
+     "  return path.substr(0, folder) + want + path.substr(folder + 5);\n"
+     "}\n"
+     "}  // namespace\n"
+     "\n"
+     "u32 NtCreateFile_entry(mapped_u32 handle_out, u32 desired_access,\n")
+edit(io,
+     "  X_STATUS result = REX_KERNEL_FS()->OpenFile(\n"
+     "      root_entry, target_path, rex::filesystem::FileDisposition((uint32_t)creation_disposition),\n",
+     "  X_STATUS result = X_STATUS_UNSUCCESSFUL;\n"
+     "  if (const std::string cd_alt = CdLocalePath(target_path, creation_disposition, create_options);  // [cd2]\n"
+     "      !cd_alt.empty()) {\n"
+     "    result = REX_KERNEL_FS()->OpenFile(root_entry, cd_alt, rex::filesystem::FileDisposition::kOpen,\n"
+     "                                       desired_access, false, true, &vfs_file, &file_action);\n"
+     "    static std::atomic<int> cd_logged{0};\n"
+     "    if (XSUCCEEDED(result) && cd_logged.fetch_add(1) < 5)\n"
+     "      REXKRNL_INFO(\"Crackdown 2 LANGUAGE: {} read from {}\", target_path, cd_alt);\n"
+     "  }\n"
+     "  if (XFAILED(result)) result = REX_KERNEL_FS()->OpenFile(\n"
+     "      root_entry, target_path, rex::filesystem::FileDisposition((uint32_t)creation_disposition),\n")
+print("Crackdown 2: LANGUAGE folder redirect in NtCreateFile")
+
+# [cd] A failed open the game repeats is logged a few times, not each time: Crackdown 1 retries its debug
+# spew file (LogFiles\Spew_0001.txt, no device: 0xC000000F) up to 20 times a second, 872 warnings in
+# crackdown_026's session, each one a log write. Per path (hashed): the first 3, then every 256th with the count.
+edit(io,
+     "  } else if (XFAILED(result)) {\n"
+     "    REXKRNL_IMPORT_FAIL(\"NtCreateFile\", \"path='{}' -> {:#x}\", target_path, result);\n",
+     "  } else if (XFAILED(result)) {\n"
+     "    static std::atomic<uint32_t> cd_fail_counts[64];  // [cd] (per path hash)\n"
+     "    const uint32_t cd_n = cd_fail_counts[std::hash<std::string_view>{}(target_path) & 63].fetch_add(1) + 1;\n"
+     "    if (cd_n <= 3 || !(cd_n & 255))\n"
+     "      REXKRNL_IMPORT_FAIL(\"NtCreateFile\", \"path='{}' -> {:#x} ({} so far)\", target_path, result, cd_n);\n")
+t_io = (fw / sdk / io).read_text(encoding="utf-8")
+if "#include <functional>" not in t_io:
+    edit(io, "#include <rex/logging.h>\n", "#include <functional>\n#include <string_view>\n#include <rex/logging.h>\n")
+print("Crackdown: repeated failed opens logged 3 times, then every 256th")
+
+# [cd] The "ps5 hitch" line of a long wait on the game's main thread names the whole guest call chain, not only
+# the wait's own return address (Crackdown 2's 60-277 ms waits all came "from game code 8295A000", inside the
+# game's WaitForSingleObjectEx wrapper sub_82959FC8: the caller is what tells them apart), and how many such
+# waits the line's 5 s throttle left out since the last line (the throttle made the waits look 5-6 s apart).
+# Walks the PowerPC back chain: [sp] the caller's frame, its saved LR at that frame - 8.
+xo = "src/system/xobject.cpp"
+edit(xo,
+     "    static std::atomic<uint64_t> last_ms{0};\n"
+     "    static std::atomic<uint32_t> lines{0};\n"
+     "    uint64_t last = last_ms.load(std::memory_order_relaxed);\n",
+     "    static std::atomic<uint64_t> last_ms{0};\n"
+     "    static std::atomic<uint32_t> lines{0};\n"
+     "    static std::atomic<uint32_t> cd_unlogged{0}, cd_unlogged_ms{0};  // [cd] waits the throttle left out\n"
+     "    uint64_t last = last_ms.load(std::memory_order_relaxed);\n"
+     "    if ((last && now - last < 5000) || lines.load(std::memory_order_relaxed) >= 100) {\n"
+     "      cd_unlogged.fetch_add(1, std::memory_order_relaxed);\n"
+     "      cd_unlogged_ms.fetch_add(uint32_t(now - since), std::memory_order_relaxed);\n"
+     "    }\n")
+edit(xo,
+     "                slot->critical_section\n"
+     "                    ? fmt::format(\" (a critical section entered from {:08X})\", slot->critical_section_lr)\n"
+     "                    : std::string());\n",
+     "                slot->critical_section\n"
+     "                    ? fmt::format(\" (a critical section entered from {:08X})\", slot->critical_section_lr)\n"
+     "                    : std::string());\n"
+     "    {  // [cd] the guest call chain, and the waits the throttle left out since the last line\n"
+     "      std::string chain;\n"
+     "      if (auto* ks = rex::system::kernel_state(); ks && ks->memory() && slot->guest_sp) {\n"
+     "        uint32_t sp = slot->guest_sp;\n"
+     "        for (int i = 0; i < 8; ++i) {\n"
+     "          if (sp < slot->guest_stack_lo || sp + 4 > slot->guest_stack_hi) break;\n"
+     "          const uint32_t frame = rex::memory::load_and_swap<uint32_t>(ks->memory()->TranslateVirtual(sp));\n"
+     "          if (frame <= sp || frame - 8 < slot->guest_stack_lo || frame > slot->guest_stack_hi) break;\n"
+     "          const uint32_t lr = rex::memory::load_and_swap<uint32_t>(ks->memory()->TranslateVirtual(frame - 8));\n"
+     "          chain += fmt::format(\" {:08X}\", lr);\n"
+     "          sp = frame;\n"
+     "        }\n"
+     "      }\n"
+     "      REXLOG_INFO(\"ps5 hitch: called from{}; {} more such waits ({} ms) since the last line\",\n"
+     "                  chain.empty() ? std::string(\" ?\") : chain, cd_unlogged.exchange(0), cd_unlogged_ms.exchange(0));\n"
+     "    }\n")
+print("Crackdown: ps5 hitch lines name the guest call chain and the waits between lines")
+
+# [cd] A guest file read that took 30 ms or more (from the call, so a queued one's wait for an IO worker counts) is
+# logged with its file, size and whether it was queued: Crackdown 2's main-thread hitches wait in Wwise, beside its
+# AK::IOThread, so whether reads are that slow decides the fix. At most one line a second, 60 in all.
+edit(io,
+     "    result = file->ReadTransfer(buffer.guest_address(), buffer_length, byte_offset, &bytes_read);\n"
+     "    TelemetryEnd(telemetry_begin, bytes_read, false);\n",
+     "    result = file->ReadTransfer(buffer.guest_address(), buffer_length, byte_offset, &bytes_read);\n"
+     "    TelemetryEnd(telemetry_begin, bytes_read, false);\n"
+     "    CdSlowRead(telemetry_begin, file->path(), bytes_read, false);  // [cd]\n")
+edit(io,
+     "              completion.file->ReadTransfer(buffer_address, length, byte_offset, &bytes_read);\n"
+     "          TelemetryEnd(telemetry_begin, bytes_read, true);\n",
+     "              completion.file->ReadTransfer(buffer_address, length, byte_offset, &bytes_read);\n"
+     "          TelemetryEnd(telemetry_begin, bytes_read, true);\n"
+     "          CdSlowRead(telemetry_begin, completion.file->path(), bytes_read, true);  // [cd]\n")
+edit(io,
+     "int64_t TelemetryNowNs() {\n"
+     "  return std::chrono::duration_cast<std::chrono::nanoseconds>(\n"
+     "             std::chrono::steady_clock::now().time_since_epoch()).count();\n"
+     "}\n",
+     "int64_t TelemetryNowNs() {\n"
+     "  return std::chrono::duration_cast<std::chrono::nanoseconds>(\n"
+     "             std::chrono::steady_clock::now().time_since_epoch()).count();\n"
+     "}\n"
+     "\n"
+     "// [cd] a read of 30 ms or more: one line a second at most, 60 in all, with how many it left out\n"
+     "void CdSlowRead(int64_t begin_ns, const std::string& path, uint32_t bytes, bool queued) {\n"
+     "  const int64_t ms = (TelemetryNowNs() - begin_ns) / 1000000;\n"
+     "  if (ms < 30) return;\n"
+     "  static std::atomic<int64_t> last_ns{0};\n"
+     "  static std::atomic<uint32_t> lines{0}, skipped{0};\n"
+     "  const int64_t now = TelemetryNowNs();\n"
+     "  int64_t last = last_ns.load(std::memory_order_relaxed);\n"
+     "  if ((last && now - last < 1000000000) || lines.load(std::memory_order_relaxed) >= 60 ||\n"
+     "      !last_ns.compare_exchange_strong(last, now)) {\n"
+     "    skipped.fetch_add(1, std::memory_order_relaxed);\n"
+     "    return;\n"
+     "  }\n"
+     "  lines.fetch_add(1, std::memory_order_relaxed);\n"
+     "  REXKRNL_INFO(\"cd slow read: {} ms for {} KB of {} ({}; {} more since the last line)\", ms, bytes >> 10, path,\n"
+     "               queued ? \"queued to an IO worker\" : \"inline\", skipped.exchange(0));\n"
+     "}\n")
+print("Crackdown: guest reads of 30 ms or more logged")

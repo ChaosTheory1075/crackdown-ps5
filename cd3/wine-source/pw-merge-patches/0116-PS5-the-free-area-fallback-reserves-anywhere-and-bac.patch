@@ -1,0 +1,57 @@
+From 7b9f07a0116e1c36633848519efc5e519437c8fe Mon Sep 17 00:00:00 2001
+From: ChaosTheory1075 <252520959+ChaosTheory1075@users.noreply.github.com>
+Date: Fri, 6 Nov 2026 11:47:11 -0500
+Subject: [PATCH 116/122] PS5: the free-area fallback reserves anywhere and
+ backs it with direct memory, not mmap(NULL)
+
+66a52cf's fallback took the memory from mmap(NULL), i.e. the title's flexible memory (a few hundred MiB; 62 MiB left in Crackdown 3's session-6): UE4 making many such allocations would run it out. sceKernelReserveVirtualRange without a fixed address + __wine_ps5_dmem_region, as ntdll's reserved areas are backed.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ dlls/ntdll/unix/virtual.c | 23 +++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index d5601c4..96e8bd2 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -815,6 +815,23 @@ extern int sceKernelVirtualQuery( const void *addr, int flags, void *info, size_
+ #define PS5_HIGH_RESERVE_MAX ((size_t)512 << 30)
+ #endif
+ 
++#ifdef __PROSPERO__
++/* [cd3] a reservation anywhere the kernel grants one (no fixed address), backed by direct memory like ntdll's
++ * reserved areas (__wine_ps5_dmem_region), then mapped with `unix_prot` (left a bare reservation for PROT_NONE). */
++static void *ps5_reserve_anywhere( size_t size, int unix_prot )
++{
++    void *ptr = NULL;
++    if (sceKernelReserveVirtualRange( &ptr, size, 0, host_page_size ) || !ptr) return MAP_FAILED;
++    __wine_ps5_dmem_region( ptr, size );
++    if (unix_prot != PROT_NONE && anon_mmap_fixed( ptr, size, unix_prot, 0 ) == MAP_FAILED)
++    {
++        munmap( ptr, size );
++        return MAP_FAILED;
++    }
++    return ptr;
++}
++#endif
++
+ #ifdef __PROSPERO__
+ /* [cd3] set by anon_mmap_tryfixed when the kernel refused a range no mapping holds (a hole it won't grant) */
+ static int ps5_reserve_hole;
+@@ -2438,8 +2455,10 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
+             TRACE( "got mem with map_free_area %p-%p\n", ptr, (char *)ptr + size );
+         }
+ #ifdef __PROSPERO__
+-        /* [cd3] no reserved or free area would take it: the kernel places it (in the range asked for) */
+-        else if ((ptr = anon_mmap_alloc( view_size, unix_prot )) != MAP_FAILED &&
++        /* [cd3] no reserved or free area would take it: the kernel picks a free range, which is backed by direct
++         * memory as the reserved areas are (ps5_reserve_anywhere). Not mmap( NULL ): that comes from the title's
++         * flexible memory, a few hundred MiB in all (62 MiB left in Crackdown 3's session-6 before this). */
++        else if ((ptr = ps5_reserve_anywhere( view_size, unix_prot )) != MAP_FAILED &&
+                  (char *)ptr >= (char *)start && (char *)ptr + view_size <= (char *)end)
+         {
+             static unsigned int logged;
+-- 
+2.43.0
+

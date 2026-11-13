@@ -1,0 +1,48 @@
+From c30b7391b9b940ea4395b2d1303c3c11c080a894 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:38 -0500
+Subject: [PATCH 092/122] 0902-win32u-ps5-send-extended-keys-as-extended.patch
+
+---
+ dlls/win32u/ps5drv.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/dlls/win32u/ps5drv.c b/dlls/win32u/ps5drv.c
+index c75d00e..9e44e09 100644
+--- a/dlls/win32u/ps5drv.c
++++ b/dlls/win32u/ps5drv.c
+@@ -540,6 +540,23 @@ static void move_cursor( HWND hwnd, INT dx, INT dy )
+     pthread_mutex_unlock( &screen_lock );
+ }
+ 
++/* The keys a PC keyboard sends with an E0 prefix. MAPVK_VK_TO_VSC gives
++ * their scan code without it (the arrows share theirs with the keypad), so
++ * DirectInput, which reads the scan code and the extended flag, would see
++ * the keypad's 8 for VK_UP. */
++static BOOL is_extended_key( WORD vk )
++{
++    switch (vk)
++    {
++    case VK_UP: case VK_DOWN: case VK_LEFT: case VK_RIGHT:
++    case VK_INSERT: case VK_DELETE: case VK_HOME: case VK_END:
++    case VK_PRIOR: case VK_NEXT: case VK_RCONTROL: case VK_RMENU:
++    case VK_LWIN: case VK_RWIN: case VK_APPS: case VK_DIVIDE:
++        return TRUE;
++    }
++    return FALSE;
++}
++
+ static BOOL ps5_ProcessEvents( DWORD mask )
+ {
+     static const DWORD button_flags[3][2] =
+@@ -582,6 +599,7 @@ static BOOL ps5_ProcessEvents( DWORD mask )
+             input.ki.wVk = event.code;
+             input.ki.wScan = NtUserMapVirtualKeyEx( event.code, MAPVK_VK_TO_VSC, NtUserGetKeyboardLayout( 0 ));
+             input.ki.dwFlags = event.down ? 0 : KEYEVENTF_KEYUP;
++            if (is_extended_key( event.code )) input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+             NtUserSendHardwareInput( hwnd, 0, &input, 0 );
+             break;
+         case 2:
+-- 
+2.43.0
+

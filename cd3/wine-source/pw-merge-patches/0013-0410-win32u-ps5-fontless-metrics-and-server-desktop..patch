@@ -1,0 +1,42 @@
+From 58a3cb5c220661a126045ad4dde21af62477409f Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:33 -0500
+Subject: [PATCH 013/122] 
+ 0410-win32u-ps5-fontless-metrics-and-server-desktop.patch
+
+---
+ dlls/win32u/sysparams.c | 2 ++
+ dlls/win32u/window.c    | 4 ++++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/dlls/win32u/sysparams.c b/dlls/win32u/sysparams.c
+index 7ff46cd..e8e848c 100644
+--- a/dlls/win32u/sysparams.c
++++ b/dlls/win32u/sysparams.c
+@@ -5481,6 +5481,8 @@ static void get_text_metr_size( HDC hdc, LOGFONTW *lf, TEXTMETRICW *metric, UINT
+     TEXTMETRICW tm;
+     UINT ret;
+     if (!metric) metric = &tm;
++    /* without fonts the metrics are not filled in: callers read zeros */
++    memset( metric, 0, sizeof(*metric) );
+     hfont = NtGdiHfontCreate( lf, sizeof(*lf), 0, 0, NULL );
+     if (!hfont || !(hfontsav = NtGdiSelectFont( hdc, hfont )))
+     {
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+index efe3b5f..8b12f0d 100644
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -607,6 +607,10 @@ WND *get_win_ptr( HWND hwnd )
+     {
+         if (is_desktop_window( hwnd )) win = WND_DESKTOP;
+     }
++#ifdef WINE_PS5_USER_DRIVER
++    /* the server created the desktop for this process, which holds no WND for it */
++    else if (!win && is_desktop_window( hwnd )) win = WND_DESKTOP;
++#endif
+     return win;
+ }
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,44 @@
+From 3f7591d899c67e90359bcfb78c7c7a613ea82d53 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:37 -0500
+Subject: [PATCH 078/122] 0888-ntdll-ps5-shared-sync-default-on.patch
+
+---
+ dlls/ntdll/unix/server.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index 272ff93..2f6f9a5 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -367,15 +367,17 @@ static int server_mutex_switch_enabled( const char *environment, const char *fil
+     return enabled;
+ }
+ 
+-/* Independent strict default-off switch for event/semaphore activation. */
++/* Independent shared event/semaphore selection with explicit overrides. */
+ static int server_shared_sync_enabled(void)
+ {
+     const char *env = getenv( "WINE_PS5_SYNC_SHARED" );
+     char *path;
+     FILE *file;
+     int enabled = 0, value, end;
++    struct stat prefix;
+ 
+     if (env) return !strcmp( env, "1" );
++    if (!config_dir || !*config_dir) return 0;
+     if (asprintf( &path, "%s/pw_sync_shared", config_dir ) == -1) return 0;
+     if ((file = fopen( path, "r" )))
+     {
+@@ -384,6 +386,8 @@ static int server_shared_sync_enabled(void)
+         enabled = value == '1' && (end == EOF || (end == '\n' && fgetc( file ) == EOF)) && !ferror( file );
+         fclose( file );
+     }
++    else if (errno == ENOENT && !stat( config_dir, &prefix ) && S_ISDIR( prefix.st_mode ))
++        enabled = 1;
+     free( path );
+     return enabled;
+ }
+-- 
+2.43.0
+

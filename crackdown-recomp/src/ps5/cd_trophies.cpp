@@ -1,8 +1,10 @@
 // Crackdown PS5 - trophies (see cd_trophies.h; from gta4-ps5's hub_trophies.cpp).
 #include "cd_trophies.h"
+#include "cd_text.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
@@ -16,8 +18,23 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr char kCatalogName[] = "4D5307DC-trophies.txt";
-constexpr char kUnlocksName[] = "4D5307DC.toml";  // (the runtime's)
+std::string Hex(uint32_t v) {
+  char b[9];
+  std::snprintf(b, sizeof(b), "%08X", v);
+  return b;
+}
+// (builds before 2026-11-06 wrote Crackdown 2's list and pictures under Crackdown's id: read those until
+// Crackdown 2 next starts and writes its own)
+std::string Named(const fs::path& user_data, const char* suffix) {
+  const std::string own = Hex(TitleOf(GameOf(user_data))) + suffix, old = std::string("4D5307DC") + suffix;
+  std::error_code ec;
+  if (own != old && !fs::exists(user_data / "achievements" / own, ec) && fs::exists(user_data / "achievements" / old, ec))
+    return old;
+  return own;
+}
+std::string CatalogName(const fs::path& user_data) { return Named(user_data, "-trophies.txt"); }
+std::string UnlocksName(const fs::path& user_data) { return Hex(TitleOf(GameOf(user_data))) + ".toml"; }  // (the runtime's)
+std::string IconsName(const fs::path& user_data) { return Named(user_data, "-icons"); }
 
 std::string Clean(std::string s) {
   for (char& c : s)
@@ -87,7 +104,28 @@ const char* GradeName(Grade grade) {
   return "";
 }
 
-bool Here(uint32_t) { return true; }  // (every achievement in the XEX is Crackdown's)
+int GameOf(const fs::path& user_data) {
+  fs::path p = user_data;
+  if (p.filename().empty()) p = p.parent_path();
+  return p.filename() == "crackdown2" ? 2 : 1;
+}
+
+uint32_t TitleOf(int game) { return game == 2 ? 0x4D5308BCu : kTitleId; }
+
+bool Online(int game, uint32_t id) {
+  if (game == 3) return false;  // (Crackdown 3: all of them count)
+  if (game == 2) {
+    // 37 LIVE and Let LIVE (Online Orbs), 39 Solid Block of Orbsome (every Orb, the Online Orbs too),
+    // 45 Squad City Glider, 49 Co-op Keepy-Up, 71 Party Bus (four Agents), 83 Tac Loc Takedown (all Agents in
+    // one Squad Chopper), 87 / 88 the Vehicle Tag Quick Matches.
+    switch (id) {
+      case 37: case 39: case 45: case 49: case 71: case 83: case 87: case 88: return true;
+      default: return false;
+    }
+  }
+  // 86 Double Trouble, 87 Tag Teamer, 93 Pack Rat: Co-op mode.
+  return id == 86 || id == 87 || id == 93;
+}
 
 int64_t UnixTime(uint64_t filetime) {
   constexpr uint64_t kEpoch = 116444736000000000ull;  // 1970 in Windows file time
@@ -104,14 +142,16 @@ int List::Percent() const {
 fs::path Folder(const fs::path& user_data) { return user_data / "achievements"; }
 
 fs::path IconFile(const fs::path& user_data, uint32_t image_id) {
-  return Folder(user_data) / "4D5307DC-icons" / (std::to_string(image_id) + ".png");
+  return Folder(user_data) / IconsName(user_data) / (std::to_string(image_id) + ".png");
 }
 
-fs::path TitleIconFile(const fs::path& user_data) { return Folder(user_data) / "4D5307DC-icons" / "title.png"; }
+fs::path TitleIconFile(const fs::path& user_data) { return Folder(user_data) / IconsName(user_data) / "title.png"; }
 
-List Load(const fs::path& user_data) {
+namespace {
+
+// A catalog (id, gamerscore, flags, image, name, description, locked description: tab separated) with its unlocks.
+List Build(std::istream& in, int game, const std::map<uint32_t, int64_t>& unlocks) {
   List list;
-  std::ifstream in(Folder(user_data) / kCatalogName);
   for (std::string line; std::getline(in, line);) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
     if (line.empty() || line[0] == '#') continue;
@@ -123,12 +163,17 @@ List Load(const fs::path& user_data) {
     t.flags = uint32_t(std::strtoul(f[2].c_str(), nullptr, 10));
     t.image_id = uint32_t(std::strtoul(f[3].c_str(), nullptr, 10));
     t.name = f[4], t.description = f[5], t.locked_description = f[6];
-    if (Here(t.id)) list.trophies.push_back(std::move(t));
+    t.game = game;
+    list.trophies.push_back(std::move(t));
   }
   list.loaded = !list.trophies.empty();
-  const auto unlocks = Unlocks(Folder(user_data) / kUnlocksName);
   for (Trophy& t : list.trophies) {
     if (auto it = unlocks.find(t.id); it != unlocks.end()) t.earned = it->second;
+    if (t.online()) {
+      ++list.online;
+      list.online_earned += t.earned ? 1 : 0;
+      continue;
+    }
     const int g = int(t.grade());
     ++list.earnable, ++list.grade_total[g];
     list.points += t.gamerscore;
@@ -141,6 +186,33 @@ List Load(const fs::path& user_data) {
   return list;
 }
 
+}  // namespace
+
+List Load(const fs::path& user_data) {
+  std::ifstream in(Folder(user_data) / CatalogName(user_data));
+  return Build(in, GameOf(user_data), Unlocks(Folder(user_data) / UnlocksName(user_data)));
+}
+
+List LoadCd3(const fs::path& cd3) {
+  // trophies.txt: "id<TAB>unix time<TAB>..." per unlock (Prospero Win's Wine writes it as the game unlocks one;
+  // the account's own at the first sign-in); the first time each one counts.
+  std::map<uint32_t, int64_t> unlocks;
+  std::ifstream got(cd3 / "trophies.txt");
+  for (std::string line; std::getline(got, line);) {
+    const auto f = Split(line, '\t');
+    if (f.size() < 2 || f[0].empty() || f[0][0] < '0' || f[0][0] > '9') continue;
+    const uint32_t id = uint32_t(std::strtoul(f[0].c_str(), nullptr, 10));
+    const int64_t when = std::max<int64_t>(1, std::strtoll(f[1].c_str(), nullptr, 10));
+    if (auto it = unlocks.find(id); it == unlocks.end() || when < it->second) unlocks[id] = when;
+  }
+  std::ifstream in(cd3 / "achievements" / "catalog.txt");
+  return Build(in, 3, unlocks);
+}
+
+fs::path Cd3IconFile(const fs::path& cd3, uint32_t id) {
+  return cd3 / "achievements" / "icons" / (std::to_string(id) + ".png");
+}
+
 bool WriteCatalog(const fs::path& user_data, const std::vector<Trophy>& trophies) {
   std::string text =
       "# Crackdown's achievements (the game writes this when it starts; the menu's Trophies page reads it)\n"
@@ -149,7 +221,7 @@ bool WriteCatalog(const fs::path& user_data, const std::vector<Trophy>& trophies
     text += std::to_string(t.id) + "\t" + std::to_string(t.gamerscore) + "\t" + std::to_string(t.flags) + "\t" +
             std::to_string(t.image_id) + "\t" + Clean(t.name) + "\t" + Clean(t.description) + "\t" +
             Clean(t.locked_description) + "\n";
-  const fs::path file = Folder(user_data) / kCatalogName;
+  const fs::path file = Folder(user_data) / (Hex(TitleOf(GameOf(user_data))) + "-trophies.txt");  // (its own name)
   if (ReadFile(file) == text) return true;
   std::error_code ec;
   fs::create_directories(file.parent_path(), ec);
@@ -285,9 +357,12 @@ std::string FitText(ImFont* f, float size, std::string t, float width) {
 
 // Letter-spaced text (the small capitals line).
 void Spaced(ImDrawList* dl, ImFont* f, float size, ImVec2 p, ImU32 col, const char* t, float spacing) {
-  for (const char* c = t; *c; ++c) {
-    dl->AddText(f, size, p, col, c, c + 1);
-    p.x += f->CalcTextSizeA(size, FLT_MAX, 0, c, c + 1).x + spacing;
+  for (const char* c = t; *c;) {  // (a whole UTF-8 letter at a time)
+    const char* next = c + 1;
+    while ((static_cast<unsigned char>(*next) & 0xC0) == 0x80) ++next;
+    dl->AddText(f, size, p, col, c, next);
+    p.x += f->CalcTextSizeA(size, FLT_MAX, 0, c, next).x + spacing;
+    c = next;
   }
 }
 
@@ -333,10 +408,13 @@ void DrawCard(ImDrawList* dl, ImVec2 display, const Card& card, float age, ImFon
   const float tx = i1.x + 20 * k, tw = p1.x - 22 * k - tx;
   DrawCup(dl, ImVec2(tx + 8 * k, p0.y + 27 * k), 20 * k, card.grade, alpha);
   Spaced(dl, bold, 15 * k, ImVec2(tx + 24 * k, p0.y + 18 * k), WhiteA(0.62f * alpha),
-         card.platinum ? "PLATINUM TROPHY" : "TROPHY EARNED", 1.8f * k);
+         card.platinum ? T("PLATINUM TROPHY", "TROFÉU DE PLATINA") : T("TROPHY EARNED", "TROFÉU CONQUISTADO"),
+         1.8f * k);
   dl->AddText(bold, 25 * k, ImVec2(tx, p0.y + 40 * k), WhiteA(alpha), FitText(bold, 25 * k, card.name, tw).c_str());
-  const std::string sub = card.platinum ? "Every Crackdown trophy"
-                                        : std::string(GradeName(card.grade)) + "  \xC2\xB7  Crackdown";
+  static constexpr const char* kGradesPt[] = {"Bronze", "Prata", "Ouro", "Platina"};  // (Grade's order)
+  const std::string sub = card.platinum ? T("Every Crackdown trophy", "Todos os troféus de Crackdown")
+                                        : std::string(T(GradeName(card.grade), kGradesPt[int(card.grade) & 3])) +
+                                              "  \xC2\xB7  Crackdown";
   dl->AddText(body, 17 * k, ImVec2(tx, p0.y + 74 * k), GradeColor(card.grade, 0.9f * alpha),
               FitText(body, 17 * k, sub, tw).c_str());
 }

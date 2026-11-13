@@ -67,7 +67,12 @@ bool BeforeTitle(uint8_t* base, uint32_t name) {
 }
 
 void EngineMovie(PPCContext& ctx, uint8_t* base, GuestFunction original) {
-  if (REXCVAR_GET(crackdown_skip_intro) && ctx.r3.u32 <= 1) return;
+  if (REXCVAR_GET(crackdown_skip_intro) && ctx.r3.u32 <= 1) {
+    static std::atomic<uint32_t> logged{0};  // (once per logo: r3 0 and 1)
+    if (!(logged.fetch_or(1u << ctx.r3.u32) & (1u << ctx.r3.u32)))
+      REXLOG_INFO("Skip intro: engine logo movie {} skipped (SKIP INTRO)", ctx.r3.u32);
+    return;
+  }
   original(ctx, base);
 }
 
@@ -83,6 +88,10 @@ void PlayVideo(PPCContext& ctx, uint8_t* base, GuestFunction original) {
   if (!Guest(player)) {
     original(ctx, base);
     return;
+  }
+  {
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 8) REXLOG_INFO("Skip intro: {} skipped (SKIP INTRO)", MovieName(base, ctx.r4.u32));
   }
   uint8_t* enabled = rex::memory::GuestPtr<uint8_t*>(base, player + kVideosEnabled);
   const uint8_t was = *enabled;
@@ -105,6 +114,11 @@ void SequenceFrame(PPCContext& ctx, uint8_t* base, GuestFunction original) {
   if (Load8(base, frame + kSequenceDone) || state < kSplashFirst || state > kSplashLast) {
     original(ctx, base);
     return;
+  }
+  {
+    static std::atomic<uint32_t> logged{0};  // (once per splash state 6..8)
+    const uint32_t bit = 1u << (state - kSplashFirst);
+    if (!(logged.fetch_or(bit) & bit)) REXLOG_INFO("Skip intro: start sequence splash {} skipped (SKIP INTRO)", state);
   }
   ctx.r3.u64 = frame - kSequenceObject;
   __imp__sub_826CD5E0(ctx, base);

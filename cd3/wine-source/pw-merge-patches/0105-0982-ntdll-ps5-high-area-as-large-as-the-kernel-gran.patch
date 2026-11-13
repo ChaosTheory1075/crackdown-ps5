@@ -1,0 +1,105 @@
+From 7494b4aa3ff679f6bf4f43bf4fa88ffc6edf86e2 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:39 -0500
+Subject: [PATCH 105/122] 
+ 0982-ntdll-ps5-high-area-as-large-as-the-kernel-grants.patch
+
+---
+ dlls/ntdll/unix/virtual.c | 63 +++++++++++++++++++++++++++++++++------
+ 1 file changed, 54 insertions(+), 9 deletions(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 5be1bf1..c91cc4c 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -804,9 +804,14 @@ extern int sceKernelReserveVirtualRange( void **addr, size_t size, int flags, si
+ #define PS5_MAP_NO_OVERWRITE 0x80
+ #define PS5_HEAP_RESERVE     0x4000000
+ /* Room for 64-bit allocations, far from the low 4 GiB the i386 guest needs:
+- * the kernel grants 16 GiB at this hint (measured on FW 12.02). */
++ * the kernel grants 16 GiB at this hint (measured on FW 12.02). A game may
++ * reserve tens of GiB of address space at once (Red Dead Redemption 2 asks
++ * for 28 GiB, a .NET runtime for 256 GiB), and a reservation costs nothing
++ * until it is committed, so mmap_init asks for PS5_HIGH_RESERVE_MAX first
++ * and halves down to PS5_HIGH_RESERVE. */
+ #define PS5_HIGH_BASE        ((void *)0x1000000000)
+ #define PS5_HIGH_RESERVE     ((size_t)16 << 30)
++#define PS5_HIGH_RESERVE_MAX ((size_t)512 << 30)
+ #endif
+ 
+ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+@@ -990,16 +995,45 @@ static struct builtin_module *get_builtin_module( void *module )
+      * reservation refuses to overwrite, so anything already mapped there
+      * keeps its place and the halving reserves around it. */
+     reserve_area( (void *)0x000068000000, (void *)0x00007f000000 );
+-    /* User space ends far below 0x7ffffe000000; reserve room for the view
+-     * heap wherever the kernel has space above 4 GiB. */
+-    {
+-        void *heap = NULL;
+-        void *high = PS5_HIGH_BASE;
++    /* The high area, as large as the kernel grants below the address space
++     * limits, then room for the view heap wherever the kernel has space
++     * above 4 GiB (user space ends far below 0x7ffffe000000): after the
++     * high area, so that it cannot land inside the range the high area asks
++     * for. PW_PS5_HIGH_RESERVE_GB gives the first size tried, in GiB; 0 keeps
++     * the single 16 GiB reservation. */
++    {
++        void *heap = NULL, *high = NULL;
++        void *limit = min( user_space_limit, host_addr_space_limit );
++        const char *env = getenv( "PW_PS5_HIGH_RESERVE_GB" );
++        size_t want = PS5_HIGH_RESERVE_MAX, size;
++
++        if (env && *env) want = (size_t)min( strtoull( env, NULL, 10 ), 1ull << 20 ) << 30;  /* 1 PiB at most */
++        if (!want)
++        {
++            high = PS5_HIGH_BASE;
++            if (!sceKernelReserveVirtualRange( &high, PS5_HIGH_RESERVE, PS5_MAP_FIXED | PS5_MAP_NO_OVERWRITE,
++                                               granularity_mask + 1 ))
++                size = PS5_HIGH_RESERVE;
++            else size = 0;
++        }
++        else for (size = want; size; size = size > PS5_HIGH_RESERVE ? max( size / 2, PS5_HIGH_RESERVE ) : 0)
++        {
++            high = PS5_HIGH_BASE;
++            if ((char *)high + size > (char *)limit) continue;
++            if (!sceKernelReserveVirtualRange( &high, size, PS5_MAP_FIXED | PS5_MAP_NO_OVERWRITE,
++                                               granularity_mask + 1 ))
++            {
++                if (high == PS5_HIGH_BASE) break;
++                munmap( high, size );  /* not where it was asked for */
++            }
++        }
++        if (size) mmap_add_reserved_area( PS5_HIGH_BASE, size );
+         if (!sceKernelReserveVirtualRange( &heap, PS5_HEAP_RESERVE, 0, granularity_mask + 1 ))
+             mmap_add_reserved_area( heap, PS5_HEAP_RESERVE );
+-        if (!sceKernelReserveVirtualRange( &high, PS5_HIGH_RESERVE, PS5_MAP_FIXED | PS5_MAP_NO_OVERWRITE,
+-                                           granularity_mask + 1 ))
+-            mmap_add_reserved_area( high, PS5_HIGH_RESERVE );
++        else heap = NULL;
++        fprintf( stderr, "wine-ps5: address space: host limit %p, user limit %p, high area %p +%zu GiB "
++                 "(asked %zu GiB%s), heap area %p\n", host_addr_space_limit, user_space_limit,
++                 size ? PS5_HIGH_BASE : NULL, size >> 30, want >> 30, env && *env ? ", PW_PS5_HIGH_RESERVE_GB" : "", heap );
+     }
+ #else
+     reserve_area( (void *)0x7ffffe000000, (void *)0x7fffffff0000 );
+@@ -1305,6 +1339,17 @@ static BOOL alloc_pages_vprot( const void *addr, size_t size )
+     for (i = idx >> pages_vprot_shift; i < (end + pages_vprot_mask) >> pages_vprot_shift; i++)
+     {
+         if (pages_vprot[i]) continue;
++#ifdef __PROSPERO__
++        /* A leaf is 1 MiB per 4 GiB of views and anon_mmap_alloc takes it
++         * from the title's flexible memory: a 256 GiB reservation (a .NET
++         * runtime's) would cost 64 MiB of it. The Unix heap is in direct
++         * memory (wine/ps5/pw_wine_dmem_ps5.c), so the leaf comes from there. */
++        if ((ptr = calloc( 1, pages_vprot_mask + 1 )))
++        {
++            pages_vprot[i] = ptr;
++            continue;
++        }
++#endif
+         if ((ptr = anon_mmap_alloc( pages_vprot_mask + 1, PROT_READ | PROT_WRITE )) == MAP_FAILED)
+         {
+             ERR( "anon mmap error %s for vprot table, size %08lx\n", strerror(errno), pages_vprot_mask + 1 );
+-- 
+2.43.0
+

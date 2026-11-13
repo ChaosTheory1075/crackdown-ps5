@@ -1,0 +1,221 @@
+From 1623e3cd3a5ce5b22cf0e135a84e2afa77eb10b3 Mon Sep 17 00:00:00 2001
+From: local <local@localhost>
+Date: Wed, 11 Nov 2026 20:23:52 -0500
+Subject: [PATCH 122/122] ntdll: [cd3] record Crackdown 3 achievement events
+ (XSAPI providers enabled, unlocks to trophies.txt)
+
+---
+ dlls/ntdll/misc.c | 183 ++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 183 insertions(+)
+
+diff --git a/dlls/ntdll/misc.c b/dlls/ntdll/misc.c
+index 5038364..51326bd 100644
+--- a/dlls/ntdll/misc.c
++++ b/dlls/ntdll/misc.c
+@@ -302,6 +302,177 @@ BOOLEAN WINAPI EtwEventProviderEnabled( REGHANDLE handle, UCHAR level, ULONGLONG
+     return FALSE;
+ }
+ 
++
++/* [cd3] Crackdown 3's achievements on the PS5. The game unlocks them by writing an Xbox Live event
++ * (TempActivateAchievement) through XSAPI's TraceLogging provider; on Windows the system uploads it. Here XSAPI's
++ * providers are enabled (it writes nothing while disabled) and each event it writes is decoded: one with an
++ * achievement id is appended to <package path>\..\trophies.txt ("id<TAB>unix time<TAB>event"), where the PS5 hub
++ * reads it; every XSAPI event also goes to xbox-events.txt beside it (the first 200), to see what the game sends. */
++static REGHANDLE cd3_xsapi[16];
++static LONG cd3_xsapi_count, cd3_events_logged;
++
++static BOOL cd3_is_xsapi( void *pc )
++{
++    LDR_DATA_TABLE_ENTRY *mod;
++    UNICODE_STRING xsapi;
++
++    if (!pc || LdrFindEntryForAddress( pc, &mod ) || !mod->BaseDllName.Buffer) return FALSE;
++    RtlInitUnicodeString( &xsapi, L"Microsoft.Xbox.Services.dll" );
++    return !RtlCompareUnicodeString( &mod->BaseDllName, &xsapi, TRUE );
++}
++
++static BOOL cd3_handle_is_xsapi( REGHANDLE handle )
++{
++    LONG i, n = min( cd3_xsapi_count, ARRAY_SIZE(cd3_xsapi) );
++    for (i = 0; i < n; i++) if (cd3_xsapi[i] == handle) return TRUE;
++    return FALSE;
++}
++
++/* appends a line to <WINE_UWP_PACKAGE_PATH minus "\game">\<name>; only for our installer's layout */
++static void cd3_append( const WCHAR *name, const char *line, ULONG len )
++{
++    static const WCHAR var_name[] = L"WINE_UWP_PACKAGE_PATH";
++    WCHAR path[MAX_PATH + 64], *p;
++    UNICODE_STRING var, value, nt;
++    OBJECT_ATTRIBUTES attr;
++    IO_STATUS_BLOCK io;
++    HANDLE file;
++    ULONG n;
++
++    RtlInitUnicodeString( &var, var_name );
++    wcscpy( path, L"\\??\\" );
++    value.Buffer = path + 4;
++    value.MaximumLength = (MAX_PATH - 1) * sizeof(WCHAR);
++    value.Length = 0;
++    if (RtlQueryEnvironmentVariable_U( NULL, &var, &value )) return;
++    n = 4 + value.Length / sizeof(WCHAR);
++    path[n] = 0;
++    while (n > 4 && (path[n - 1] == '\\' || path[n - 1] == ';')) path[--n] = 0;
++    if (!(p = wcsrchr( path, '\\' )) || wcsicmp( p + 1, L"game" )) return;
++    wcscpy( p + 1, name );
++    RtlInitUnicodeString( &nt, path );
++    InitializeObjectAttributes( &attr, &nt, OBJ_CASE_INSENSITIVE, 0, NULL );
++    if (NtCreateFile( &file, FILE_APPEND_DATA | SYNCHRONIZE, &attr, &io, NULL, FILE_ATTRIBUTE_NORMAL,
++                      FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN_IF,
++                      FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE, NULL, 0 )) return;
++    NtWriteFile( file, NULL, NULL, NULL, &io, line, len, NULL, NULL );
++    NtClose( file );
++}
++
++/* a field's text: ASCII from UTF-16/UTF-8 (other characters as '?') */
++static void cd3_text( char *out, size_t size, const BYTE *v, ULONG len, BOOL wide )
++{
++    size_t i = 0;
++    ULONG j;
++    for (j = 0; i + 1 < size && j < len; j += wide ? 2 : 1)
++    {
++        unsigned c = wide ? (j + 1 < len ? *(const WCHAR *)(v + j) : 0) : v[j];
++        if (!c) break;
++        out[i++] = c < 0x20 || c > 0x7e ? (c == '\t' || c == '\n' || c == '\r' ? ' ' : '?') : (char)c;
++    }
++    out[i] = 0;
++}
++
++/* an achievement id in a JSON text ("...chievementId":12 or "...chievementId":"12") */
++static int cd3_id_in_json( const char *s )
++{
++    const char *p = s;
++    while ((p = strstr( p, "chievement" )))
++    {
++        const char *q = p + 10;
++        while (*q && *q != '"') q++;               /* rest of the key */
++        if (*q == '"') q++;
++        while (*q == ' ' || *q == ':' || *q == '"') q++;
++        if (*q >= '0' && *q <= '9') return atoi( q );
++        p += 10;
++    }
++    return -1;
++}
++
++static void cd3_xsapi_event( ULONG count, const EVENT_DATA_DESCRIPTOR *data )
++{
++    const char *meta = NULL, *end = NULL, *p, *event = "?";
++    char line[1600], text[600];
++    size_t len = 0;
++    ULONG i, next = 0;
++    int id = -1;
++    LARGE_INTEGER now;
++
++#define CD3_OUT(...) do { if (len < sizeof(line) - 1) len += snprintf( line + len, sizeof(line) - len, __VA_ARGS__ ); \
++                      if (len > sizeof(line) - 1) len = sizeof(line) - 1; } while (0)
++    __TRY
++    {
++        for (i = 0; i < count; i++)
++        {
++            BYTE type = data[i].Reserved & 0xff;
++            if (type == 1) { meta = (const char *)(ULONG_PTR)data[i].Ptr; end = meta + data[i].Size; }
++            else if (type == 0 && !next) next = i;
++        }
++        p = meta ? meta + 2 : end;
++        while (p < end && (*p++ & 0x80)) ;
++        if (p < end) { event = p; p += strlen( p ) + 1; }
++        CD3_OUT( "%s", event );
++        while (p < end && next < count)
++        {
++            const char *name = p;
++            BYTE in, out = 0;
++            const BYTE *v;
++            ULONG size;
++            BOOL is_id;
++
++            p += strlen( p ) + 1;
++            in = *p++;
++            if (in & 0x80) { out = *p++; while (out & 0x80 && p < end) out = *p++; }
++            if ((in & 0x60) == 0x20) p += 2;
++            if ((in & 0x1f) == 24) continue;
++            if (in & 0x40) { next += 2; continue; }
++            v = (const BYTE *)(ULONG_PTR)data[next].Ptr;
++            size = data[next].Size;
++            next++;
++            is_id = strstr( name, "chievement" ) != NULL;
++            text[0] = 0;
++            switch (in & 0x1f)
++            {
++            case 1: cd3_text( text, sizeof(text), v, size, TRUE ); break;
++            case 2: cd3_text( text, sizeof(text), v, size, FALSE ); break;
++            case 3: case 4: snprintf( text, sizeof(text), "%u", v[0] ); break;
++            case 5: case 6: snprintf( text, sizeof(text), "%u", *(const USHORT *)v ); break;
++            case 7: case 8: case 13: case 20: snprintf( text, sizeof(text), "%d", *(const int *)v ); break;
++            case 9: case 10: case 21: snprintf( text, sizeof(text), "%I64d", *(const LONGLONG *)v ); break;
++            case 22: case 23:
++                if (next >= count) break;
++                v = (const BYTE *)(ULONG_PTR)data[next].Ptr;
++                size = data[next].Size;
++                next++;
++                cd3_text( text, sizeof(text), v, size, (in & 0x1f) == 22 );
++                break;
++            case 14: case 25: if (next < count) next++; break;
++            default: break;
++            }
++            CD3_OUT( "\t%s=%s", name, text );
++            if (id < 0 && is_id && text[0] >= '0' && text[0] <= '9') id = atoi( text );
++            if (id < 0 && text[0]) id = cd3_id_in_json( text );
++        }
++    }
++    __EXCEPT_PAGE_FAULT
++    {
++        CD3_OUT( "\t<fault>" );
++    }
++    __ENDTRY
++#undef CD3_OUT
++    if (len < sizeof(line) - 1) line[len++] = '\n';
++    if (InterlockedIncrement( &cd3_events_logged ) <= 200) cd3_append( L"xbox-events.txt", line, len );
++    if (id >= 0 && (strstr( event, "chievement" ) || strstr( line, "chievement" )))
++    {
++        char got[160];
++        int n;
++        NtQuerySystemTime( &now );
++        n = snprintf( got, sizeof(got), "%d\t%I64d\t%.100s\n", id,
++                      now.QuadPart / 10000000 - 11644473600LL, event );
++        cd3_append( L"trophies.txt", got, n );
++    }
++}
++
+ /******************************************************************************
+  *                  EtwEventRegister (NTDLL.@)
+  */
+@@ -313,6 +484,17 @@ ULONG WINAPI EtwEventRegister( LPCGUID provider, PENABLECALLBACK callback, PVOID
+     if (!handle) return ERROR_INVALID_PARAMETER;
+ 
+     *handle = 0xdeadbeef;
++    if (cd3_is_xsapi( __builtin_return_address(0) ))
++    {
++        LONG i = InterlockedIncrement( &cd3_xsapi_count ) - 1;
++        if (i < ARRAY_SIZE(cd3_xsapi))
++        {
++            *handle = cd3_xsapi[i] = 0x58534100 + i;   /* [cd3] its own, so its events are known */
++            if (callback) callback( provider, 1 /* EVENT_CONTROL_CODE_ENABLE_PROVIDER */, 5, ~(ULONGLONG)0, 0,
++                                    NULL, context );
++            return ERROR_SUCCESS;
++        }
++    }
+     /* With trace+tracelogging, enable every provider at verbose level so TraceLogging (and wil)
+      * events are written, and print them below: it is the app's own log. */
+     if (TRACE_ON(tracelogging) && callback)
+@@ -486,6 +668,7 @@ ULONG WINAPI EtwEventWriteString( REGHANDLE handle, UCHAR level, ULONGLONG keywo
+ ULONG WINAPI EtwEventWriteTransfer( REGHANDLE handle, PCEVENT_DESCRIPTOR descriptor, LPCGUID activity,
+                                     LPCGUID related, ULONG count, PEVENT_DATA_DESCRIPTOR data )
+ {
++    if (cd3_handle_is_xsapi( handle )) cd3_xsapi_event( count, data );
+     if (TRACE_ON(tracelogging)) dump_tracelogging( count, data );
+     else FIXME("%s, %p, %s, %s, %lu, %p: stub\n", wine_dbgstr_longlong(handle), descriptor,
+                debugstr_guid(activity), debugstr_guid(related), count, data);
+-- 
+2.43.0
+

@@ -1,0 +1,38 @@
+From 8624cc84c4e03022bfc3214ca9e6caa79cfea8a1 Mon Sep 17 00:00:00 2001
+From: ChaosTheory1075 <252520959+ChaosTheory1075@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 17:27:30 -0500
+Subject: [PATCH 114/122] PS5: wineserver doesn't require the prefix to be
+ owned by the title's uid
+
+---
+ server/request.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/server/request.c b/server/request.c
+index 8a49bab..a72c41a 100644
+--- a/server/request.c
++++ b/server/request.c
+@@ -971,7 +971,9 @@ static void create_dir( const char *name, struct stat *st )
+     }
+     if (!S_ISDIR(st->st_mode)) fatal_error( "%s is not a directory\n", name );
+ #ifndef __PROSPERO__  /* one user; its file systems do not keep unix owners */
++#ifndef __PROSPERO__  /* [cd3] files copied over FTP are root's; the title runs as another uid */
+     if (st->st_uid != getuid()) fatal_error( "%s is not owned by you\n", name );
++#endif
+     if (st->st_mode & 077) fatal_error( "%s must not be accessible by other users\n", name );
+ #endif
+ }
+@@ -1018,8 +1020,10 @@ static char *create_server_dir( int force )
+         fatal_error( "open %s: %s\n", config_dir, strerror( errno ));
+     if (fstat( config_dir_fd, &st ) == -1)
+         fatal_error( "stat %s: %s\n", config_dir, strerror( errno ));
++#ifndef __PROSPERO__  /* [cd3] as above */
+     if (st.st_uid != getuid())
+         fatal_error( "%s is not owned by you\n", config_dir );
++#endif
+ 
+     /* create the base directory if needed */
+ 
+-- 
+2.43.0
+

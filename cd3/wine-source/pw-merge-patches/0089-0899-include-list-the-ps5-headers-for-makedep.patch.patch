@@ -1,0 +1,27 @@
+From a7e5721b95ba4f93f9adcf018aa1116687a5807f Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:38 -0500
+Subject: [PATCH 089/122] 0899-include-list-the-ps5-headers-for-makedep.patch
+
+---
+ include/Makefile.in | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/include/Makefile.in b/include/Makefile.in
+index 9df980c..35b41b8 100644
+--- a/include/Makefile.in
++++ b/include/Makefile.in
+@@ -1152,6 +1152,10 @@ SOURCES = \
+ 	wine/opengl_driver.h \
+ 	wine/orpc.idl \
+ 	wine/plugplay.idl \
++	wine/ps5_mutex_backend.h \
++	wine/ps5_mutex_word.h \
++	wine/ps5_sync_backend.h \
++	wine/ps5_sync_word.h \
+ 	wine/rbtree.h \
+ 	wine/schrpc.idl \
+ 	wine/server.h \
+-- 
+2.43.0
+

@@ -1,0 +1,28 @@
+From 1ccc09fdbec15dafae523db4de0f56edc58796c4 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:38 -0500
+Subject: [PATCH 087/122] 
+ 0897-ntdll-ps5-back-fixed-reservations-with-direct-memory.patch
+
+---
+ dlls/ntdll/unix/virtual.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index c865efe..fe88a26 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -815,6 +815,10 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+         errno = EEXIST;
+         return MAP_FAILED;
+     }
++    /* Protecting a bare reservation does not back it with memory, so a
++     * later commit would fault on its first access: direct memory backs
++     * this range like the reserved areas (until it is unmapped). */
++    __wine_ps5_dmem_region( start, size );
+     if (prot != PROT_NONE && anon_mmap_fixed( start, size, prot, flags ) == MAP_FAILED)
+     {
+         munmap( start, size );
+-- 
+2.43.0
+

@@ -1,0 +1,31 @@
+From 8021e3e56eb9ec813205a96bd7df05530ba46eed Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:33 -0500
+Subject: [PATCH 010/122] 
+ 0150-server-ps5-save-the-registry-in-1mib-writes.patch
+
+---
+ server/registry.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/server/registry.c b/server/registry.c
+index 2444e20..364b72e 100644
+--- a/server/registry.c
++++ b/server/registry.c
+@@ -1991,6 +1991,13 @@ void init_registry(void)
+ /* save a registry branch to a file */
+ static void save_all_subkeys( struct key *key, FILE *f )
+ {
++#ifdef __PROSPERO__
++    /* Each write() costs about 3.3 ms on the console whatever its size, and
++     * stdio would issue one per st_blksize (64 KiB on /data): a 3.2 MB
++     * system.reg took 154 ms, holding up every server request. Write it in
++     * 1 MiB pieces instead. */
++    setvbuf( f, NULL, _IOFBF, 1 << 20 );
++#endif
+     fprintf( f, "WINE REGISTRY Version 2\n" );
+     fprintf( f, ";; All keys relative to " );
+     dump_path( key, NULL, f );
+-- 
+2.43.0
+

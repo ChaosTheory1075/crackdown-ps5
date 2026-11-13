@@ -1,0 +1,32 @@
+From 08fe84571aea8f767d40d2433bb37a84b0c203d2 Mon Sep 17 00:00:00 2001
+From: local <local@localhost>
+Date: Wed, 11 Nov 2026 12:17:59 -0500
+Subject: [PATCH 119/122] PS5: preload libgnutls and libfreetype by bare name
+
+---
+ dlls/ntdll/unix/virtual.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index c5f718c..681645d 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -1109,6 +1109,15 @@ static void ps5_preload_unixlibs( const char *dir )
+         handle = dlopen( path, RTLD_NOW );
+         ERR( "PS5PRELOAD %s: %s\n", path, handle ? "loaded" : dlerror() );
+     }
++    /* Loaded by bare name (bcrypt/secur32 TLS, fonts): use the same bare name so the later dlopen finds it. */
++    {
++        static const char * const bare[] = { "libgnutls.so", "libfreetype.so" };
++        for (i = 0; i < ARRAY_SIZE(bare); i++)
++        {
++            void *handle = dlopen( bare[i], RTLD_NOW );
++            ERR( "PS5PRELOAD %s: %s\n", bare[i], handle ? "loaded" : dlerror() );
++        }
++    }
+ }
+ #endif
+ 
+-- 
+2.43.0
+

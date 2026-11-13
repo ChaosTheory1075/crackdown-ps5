@@ -1,0 +1,56 @@
+From 273b2373437db0b068afb2802d036f9bc4cc645d Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:36 -0500
+Subject: [PATCH 059/122] 0760-ws2-32-read-fqdn-once.patch
+
+---
+ dlls/ws2_32/protocol.c | 29 ++++++++++++++++++++++-------
+ 1 file changed, 22 insertions(+), 7 deletions(-)
+
+diff --git a/dlls/ws2_32/protocol.c b/dlls/ws2_32/protocol.c
+index 78dc0c7..136d215 100644
+--- a/dlls/ws2_32/protocol.c
++++ b/dlls/ws2_32/protocol.c
+@@ -31,17 +31,32 @@ WINE_DECLARE_DEBUG_CHANNEL(winediag);
+ 
+ static char *get_fqdn(void)
+ {
+-    char *ret;
+-    DWORD size = 0;
++    WCHAR local[256], *wide = local;
++    DWORD size = ARRAY_SIZE(local);
++    char *ret = NULL;
++    int count;
++
++    /* A fresh wide lookup avoids the ANSI size probe's duplicate registry
++     * queries. Do not cache the name: it can change during the process. */
++    if (!GetComputerNameExW( ComputerNamePhysicalDnsFullyQualified, wide, &size ))
++    {
++        SIZE_T bytes = (SIZE_T)size * sizeof(*wide);
+ 
+-    GetComputerNameExA( ComputerNamePhysicalDnsFullyQualified, NULL, &size );
+-    if (GetLastError() != ERROR_MORE_DATA) return NULL;
+-    if (!(ret = malloc( size ))) return NULL;
+-    if (!GetComputerNameExA( ComputerNamePhysicalDnsFullyQualified, ret, &size ))
++        if (GetLastError() != ERROR_MORE_DATA || size <= ARRAY_SIZE(local) ||
++            bytes / sizeof(*wide) != size) return NULL;
++        if (!(wide = malloc( bytes ))) return NULL;
++        if (!GetComputerNameExW( ComputerNamePhysicalDnsFullyQualified, wide, &size )) goto done;
++    }
++    count = WideCharToMultiByte( CP_ACP, 0, wide, -1, NULL, 0, NULL, NULL );
++    if (!count || !(ret = malloc( count ))) goto done;
++    if (!WideCharToMultiByte( CP_ACP, 0, wide, -1, ret, count, NULL, NULL ))
+     {
+         free( ret );
+-        return NULL;
++        ret = NULL;
+     }
++
++done:
++    if (wide != local) free( wide );
+     return ret;
+ }
+ 
+-- 
+2.43.0
+

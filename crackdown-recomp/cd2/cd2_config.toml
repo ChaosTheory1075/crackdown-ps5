@@ -1,0 +1,943 @@
+# Crackdown 2 (4D5308BC) with Title Update 5 - ReXGlue codegen configuration. The codegen's default
+# register model (as Crackdown 1's); [functions] filled in by this game's analysis
+# (Extras/cd2tmp/analyse.sh: find_missed_entries2.py, peek_entries.py, mark_share_registers.py).
+
+[functions]
+# The analyzer started a function at 0x82CFA85C, inside this one (its own beq lands there): the real
+# start follows sub_82CFA7D8's tail call (lis r11; mr r4,r3; ...; blr at 0x82CFA884).
+"0x82CFA82C" = { size = 0x5C }
+
+# Unresolved tail-call targets (b from another function), codegen pass 1.
+"0x8227B680" = {}
+"0x82458688" = {}
+"0x82458A88" = {}
+"0x8245B6D0" = {}
+"0x82542128" = {}
+"0x8260DD60" = {}
+"0x826105E0" = {}
+"0x8261DED0" = {}
+"0x826225D0" = {}
+"0x82623150" = {}
+"0x826270F8" = {}
+"0x82629280" = {}
+"0x82634928" = {}
+"0x8263A6A8" = {}
+"0x8263B0F8" = {}
+"0x8263BA68" = {}
+"0x82684BE8" = {}
+"0x826E9860" = {}
+"0x826EC098" = {}
+"0x826ECEC8" = {}
+"0x82736D78" = {}
+"0x8273A6F0" = {}
+"0x8273AE10" = {}
+"0x8273E5A8" = {}
+"0x82743058" = {}
+"0x82743698" = {}
+"0x82746878" = {}
+"0x82747EF8" = {}
+"0x82770140" = {}
+"0x82C42358" = {}
+"0x82CF7BD8" = {}
+"0x82D51970" = {}
+
+# Entries the analyzer merged into the function before them (each follows a tail call, blr or
+# bctr; referenced from data or built with lis/addi): tools/find_missed_entries2.py, checked with
+# tools/peek_entries.py (not switch labels, not __except blocks).
+"0x823BA0D0" = {}
+"0x823DAA88" = {}
+"0x823DAA90" = {}
+"0x823FCBC8" = {}
+"0x823FCBD8" = {}
+"0x823FCC00" = {}
+"0x82408CA8" = {}
+"0x82408CD0" = {}
+"0x8240E708" = {}
+"0x8240E718" = {}
+"0x82416CC8" = {}
+"0x82417070" = {}
+"0x82419CB8" = {}
+"0x8242A3B0" = {}
+"0x824411F0" = {}
+"0x82441200" = {}
+"0x82450ED0" = {}
+"0x82450EE0" = {}
+"0x82450EF0" = {}
+"0x82450F00" = {}
+"0x82450F10" = {}
+"0x82450F20" = {}
+"0x82450F30" = {}
+"0x82450F40" = {}
+"0x82450F50" = {}
+"0x82450F60" = {}
+"0x82450F70" = {}
+"0x824556F8" = {}
+"0x824577E0" = {}
+"0x824577F0" = {}
+"0x82458648" = {}
+"0x82458660" = {}
+"0x82458680" = {}
+"0x82458C18" = {}
+"0x8245A5E0" = {}
+"0x8245A5E8" = {}
+"0x8245AE10" = {}
+"0x8245AE28" = {}
+"0x8245B678" = {}
+"0x8245B6A0" = {}
+"0x8245B6B0" = {}
+"0x8245BE00" = {}
+"0x8245C680" = {}
+"0x8245C688" = {}
+"0x8245C6B0" = {}
+"0x8245C6C8" = {}
+"0x8245D3F8" = {}
+"0x8245F688" = {}
+"0x8245F690" = {}
+"0x82467B10" = {}
+"0x8246A798" = {}
+"0x8246A7A8" = {}
+"0x8246E6C8" = {}
+"0x8246E6D8" = {}
+"0x82473D40" = {}
+"0x82473D58" = {}
+"0x82474DF8" = {}
+"0x82474E08" = {}
+"0x82475610" = {}
+"0x82475620" = {}
+"0x82475860" = {}
+"0x82479AA0" = {}
+"0x82485578" = {}
+"0x82488968" = {}
+"0x82489580" = {}
+"0x82489590" = {}
+"0x82489C10" = {}
+"0x82489C18" = {}
+"0x8248A2D8" = {}
+"0x8248E2E0" = {}
+"0x824A8CB0" = {}
+"0x824B0BF8" = {}
+"0x824B0C08" = {}
+"0x824B0C18" = {}
+"0x824B0C28" = {}
+"0x824B0C38" = {}
+"0x824B0C48" = {}
+"0x824B0C58" = {}
+"0x824B0C70" = {}
+"0x824B0C80" = {}
+"0x824B0C90" = {}
+"0x824B0CA0" = {}
+"0x824B0CB0" = {}
+"0x824B0CC8" = {}
+"0x824B0CD8" = {}
+"0x824B0CE8" = {}
+"0x824B0CF8" = {}
+"0x824B0D08" = {}
+"0x824B0D18" = {}
+"0x824B0D28" = {}
+"0x824B0D38" = {}
+"0x824B0D48" = {}
+"0x824B0D58" = {}
+"0x824B0D68" = {}
+"0x824BDD30" = {}
+"0x824BDD40" = {}
+"0x824CC9E0" = {}
+"0x824CCA08" = {}
+"0x824CCA18" = {}
+"0x824CCA28" = {}
+"0x824CCA38" = {}
+"0x824CCA48" = {}
+"0x824CCA58" = {}
+"0x824CCA68" = {}
+"0x824CCA78" = {}
+"0x824CCA88" = {}
+"0x824CCA98" = {}
+"0x824CCAA8" = {}
+"0x824CF668" = {}
+"0x824CF678" = {}
+"0x824CF688" = {}
+"0x824CF698" = {}
+"0x824CF6A8" = {}
+"0x824CF6B8" = {}
+"0x824D1A30" = {}
+"0x824DB018" = {}
+"0x824DB020" = {}
+"0x82537B28" = {}
+"0x8253EC60" = {}
+"0x8253EC68" = {}
+"0x8253EC90" = {}
+"0x8253ECA0" = {}
+"0x8253EF28" = {}
+"0x8253EF30" = {}
+"0x8253EF50" = {}
+"0x8253EF70" = {}
+"0x82540288" = {}
+"0x825402A0" = {}
+"0x825402B8" = {}
+"0x825402C0" = {}
+"0x825420E0" = {}
+"0x825420E8" = {}
+"0x82542110" = {}
+"0x82542F08" = {}
+"0x82542F28" = {}
+"0x8254E478" = {}
+"0x8254E480" = {}
+"0x8254E488" = {}
+"0x8254E980" = {}
+"0x8254FEE8" = {}
+"0x8254FF00" = {}
+"0x82551AF0" = {}
+"0x82552138" = {}
+"0x82552148" = {}
+"0x82552158" = {}
+"0x8255E5B0" = {}
+"0x82564280" = {}
+"0x82580A58" = {}
+"0x82583B00" = {}
+"0x825982B8" = {}
+"0x825A7358" = {}
+"0x825BE288" = {}
+"0x825C03D0" = {}
+"0x82602980" = {}
+"0x826079E0" = {}
+"0x826079F8" = {}
+"0x82607A00" = {}
+"0x82607A28" = {}
+"0x82607A38" = {}
+"0x82607A50" = {}
+"0x82607A80" = {}
+"0x826093C8" = {}
+"0x826093E0" = {}
+"0x826093E8" = {}
+"0x82609410" = {}
+"0x8260A040" = {}
+"0x8260A060" = {}
+"0x8260A080" = {}
+"0x8260A258" = {}
+"0x8260A278" = {}
+"0x8260A998" = {}
+"0x8260A9D0" = {}
+"0x8260A9D8" = {}
+"0x8260A9E0" = {}
+"0x8260A9F8" = {}
+"0x8260AA08" = {}
+"0x8260AA18" = {}
+"0x8260AA20" = {}
+"0x8260AA30" = {}
+"0x8260AA48" = {}
+"0x8260AA70" = {}
+"0x8260AA78" = {}
+"0x8260AA90" = {}
+"0x8260AAA0" = {}
+"0x8260AAA8" = {}
+"0x8260B128" = {}
+"0x8260B140" = {}
+"0x8260B148" = {}
+"0x8260B170" = {}
+"0x8260BA98" = {}
+"0x8260BAB8" = {}
+"0x8260BAD0" = {}
+"0x8260BAE8" = {}
+"0x8260DD10" = {}
+"0x8260DD38" = {}
+"0x8260DD48" = {}
+"0x8260EC28" = {}
+"0x8260EC60" = {}
+"0x82610590" = {}
+"0x826105B8" = {}
+"0x826105C8" = {}
+"0x82610BB8" = {}
+"0x82617C90" = {}
+"0x82617C98" = {}
+"0x82617CC0" = {}
+"0x82617CD0" = {}
+"0x82618780" = {}
+"0x826187A8" = {}
+"0x826187B8" = {}
+"0x82619658" = {}
+"0x82619660" = {}
+"0x82619668" = {}
+"0x82619670" = {}
+"0x8261A118" = {}
+"0x8261A120" = {}
+"0x8261A138" = {}
+"0x8261A140" = {}
+"0x8261CFE0" = {}
+"0x8261D000" = {}
+"0x8261D008" = {}
+"0x8261DEA8" = {}
+"0x8261DEB0" = {}
+"0x8261DEB8" = {}
+"0x8261DFF0" = {}
+"0x8261E010" = {}
+"0x8261F818" = {}
+"0x8261F838" = {}
+"0x8261F848" = {}
+"0x8261F858" = {}
+"0x82621778" = {}
+"0x82621790" = {}
+"0x82621798" = {}
+"0x82622580" = {}
+"0x826225A8" = {}
+"0x826225B8" = {}
+"0x82622D98" = {}
+"0x82622DB8" = {}
+"0x82623128" = {}
+"0x82623138" = {}
+"0x82623148" = {}
+"0x82623E28" = {}
+"0x82623E48" = {}
+"0x826270A8" = {}
+"0x826270D0" = {}
+"0x826270E0" = {}
+"0x82629248" = {}
+"0x8262A630" = {}
+"0x8262A668" = {}
+"0x8262A678" = {}
+"0x8262D868" = {}
+"0x8262D870" = {}
+"0x8262D890" = {}
+"0x82630CA0" = {}
+"0x82630CB8" = {}
+"0x82630CC0" = {}
+"0x82630CE8" = {}
+"0x826319E8" = {}
+"0x82631A00" = {}
+"0x82631A08" = {}
+"0x82631A30" = {}
+"0x826348F0" = {}
+"0x82634908" = {}
+"0x82634920" = {}
+"0x82635430" = {}
+"0x82635450" = {}
+"0x8263A660" = {}
+"0x8263A678" = {}
+"0x8263A680" = {}
+"0x8263B0C0" = {}
+"0x8263BA18" = {}
+"0x8263BA50" = {}
+"0x8263BE50" = {}
+"0x8263BE70" = {}
+"0x8263F708" = {}
+"0x8263F710" = {}
+"0x826464A8" = {}
+"0x82651D68" = {}
+"0x82652840" = {}
+"0x82652DF0" = {}
+"0x82652E10" = {}
+"0x82652F80" = {}
+"0x82654558" = {}
+"0x82654578" = {}
+"0x82654588" = {}
+"0x82683F60" = {}
+"0x82684A90" = {}
+"0x82684AA0" = {}
+"0x82684AA8" = {}
+"0x82684AB8" = {}
+"0x82684AC8" = {}
+"0x8268A108" = {}
+"0x8268A110" = {}
+"0x8268A120" = {}
+"0x8268A168" = {}
+"0x8268A178" = {}
+"0x8268A1A8" = {}
+"0x8268A1B8" = {}
+"0x826B1A50" = {}
+"0x826B1A60" = {}
+"0x826B1A80" = {}
+"0x826B1A90" = {}
+"0x826B1A98" = {}
+"0x826B1AB0" = {}
+"0x826B1AB8" = {}
+"0x826B1AD8" = {}
+"0x826B1AE0" = {}
+"0x826B5BE0" = {}
+"0x826B5BF0" = {}
+"0x826B5C10" = {}
+"0x826B5C18" = {}
+"0x826B5C38" = {}
+"0x826B5C40" = {}
+"0x826B5C48" = {}
+"0x826B5C58" = {}
+"0x826B5C60" = {}
+"0x826B5C68" = {}
+"0x826B5C80" = {}
+"0x826B7D10" = {}
+"0x826B7D18" = {}
+"0x826B7D20" = {}
+"0x826B7D28" = {}
+"0x826C0688" = {}
+"0x826C06A8" = {}
+"0x826C06B0" = {}
+"0x826C8AD0" = {}
+"0x826C8AE0" = {}
+"0x826C8B00" = {}
+"0x826C8B08" = {}
+"0x826CC4C8" = {}
+"0x826CC4E8" = {}
+"0x826CC4F0" = {}
+"0x826DF820" = {}
+"0x826DF830" = {}
+"0x826DF850" = {}
+"0x826DF860" = {}
+"0x826DF868" = {}
+"0x826DF878" = {}
+"0x826DF890" = {}
+"0x826DF8B0" = {}
+"0x826E1F28" = {}
+"0x826E1F38" = {}
+"0x826E1F58" = {}
+"0x826E1F60" = {}
+"0x826E22B0" = {}
+"0x826E22C0" = {}
+"0x826E22E0" = {}
+"0x826E22E8" = {}
+"0x826E9820" = {}
+"0x826E9828" = {}
+"0x826E9848" = {}
+"0x826EC078" = {}
+"0x826EC090" = {}
+"0x826ECEB8" = {}
+"0x826ED9A8" = {}
+"0x826ED9D0" = {}
+"0x826FB900" = {}
+"0x826FB908" = {}
+"0x826FB930" = {}
+"0x826FB940" = {}
+"0x826FC618" = {}
+"0x826FC620" = {}
+"0x826FC628" = {}
+"0x826FC638" = {}
+"0x82700768" = {}
+"0x82700788" = {}
+"0x82700790" = {}
+"0x8270B2C8" = {}
+"0x827263C0" = {}
+"0x827263D0" = {}
+"0x82730578" = {}
+"0x82730588" = {}
+"0x82730590" = {}
+"0x827305A0" = {}
+"0x827305A8" = {}
+"0x82731CF0" = {}
+"0x82731D00" = {}
+"0x82731D20" = {}
+"0x82731D28" = {}
+"0x82732A00" = {}
+"0x82732B80" = {}
+"0x82732BA8" = {}
+"0x82732BB8" = {}
+"0x82736178" = {}
+"0x827361A0" = {}
+"0x827361B0" = {}
+"0x827361D0" = {}
+"0x82736D28" = {}
+"0x82736D48" = {}
+"0x82736D50" = {}
+"0x82738D10" = {}
+"0x82738DA8" = {}
+"0x82738DB0" = {}
+"0x82738DC0" = {}
+"0x82738DF8" = {}
+"0x82738E08" = {}
+"0x82738E18" = {}
+"0x8273A698" = {}
+"0x8273A6C0" = {}
+"0x8273A6D0" = {}
+"0x8273ADB8" = {}
+"0x8273ADF0" = {}
+"0x8273B488" = {}
+"0x8273B4C0" = {}
+"0x8273D298" = {}
+"0x8273D2A8" = {}
+"0x8273D2D0" = {}
+"0x8273D2E0" = {}
+"0x8273D2F0" = {}
+"0x8273D300" = {}
+"0x8273D320" = {}
+"0x8273D330" = {}
+"0x8273D340" = {}
+"0x8273E550" = {}
+"0x8273E578" = {}
+"0x8273E588" = {}
+"0x8273F980" = {}
+"0x8273FA18" = {}
+"0x8273FA20" = {}
+"0x8273FA50" = {}
+"0x8273FA58" = {}
+"0x8273FA68" = {}
+"0x82740EE0" = {}
+"0x82740EF8" = {}
+"0x82740F18" = {}
+"0x82740F20" = {}
+"0x82741590" = {}
+"0x827415B0" = {}
+"0x827415B8" = {}
+"0x82743038" = {}
+"0x82743040" = {}
+"0x82743050" = {}
+"0x82743688" = {}
+"0x82744250" = {}
+"0x82744268" = {}
+"0x82744938" = {}
+"0x82744948" = {}
+"0x82744968" = {}
+"0x82744970" = {}
+"0x827450C0" = {}
+"0x827450C8" = {}
+"0x827450E8" = {}
+"0x827450F0" = {}
+"0x82745110" = {}
+"0x82745610" = {}
+"0x82745620" = {}
+"0x82745640" = {}
+"0x82745648" = {}
+"0x82746820" = {}
+"0x82746848" = {}
+"0x82746858" = {}
+"0x82746D38" = {}
+"0x82746E90" = {}
+"0x82746EA8" = {}
+"0x82747308" = {}
+"0x82747318" = {}
+"0x82747330" = {}
+"0x82747338" = {}
+"0x82747EB8" = {}
+"0x82747EC0" = {}
+"0x82747EE0" = {}
+"0x8274BCA8" = {}
+"0x8274BCE0" = {}
+"0x82758530" = {}
+"0x82758538" = {}
+"0x82771EA8" = {}
+"0x82776BA8" = {}
+"0x82776BC0" = {}
+"0x82776BC8" = {}
+"0x82776BD0" = {}
+"0x827A3F68" = {}
+"0x827A3F70" = {}
+"0x827A9A88" = {}
+"0x827A9AB0" = {}
+"0x827B8980" = {}
+"0x827BC178" = {}
+"0x827D5CE8" = {}
+"0x827D5CF0" = {}
+"0x827EDB10" = {}
+"0x827EDB18" = {}
+"0x828006E8" = {}
+"0x82807388" = {}
+"0x82807390" = {}
+"0x82809A50" = {}
+"0x82809A58" = {}
+"0x8280B638" = {}
+"0x8280B660" = {}
+"0x8280BFC8" = {}
+"0x8280BFD0" = {}
+"0x82860728" = {}
+"0x8289D780" = {}
+"0x8289D7A0" = {}
+"0x8289D7B8" = {}
+"0x828AD318" = {}
+"0x828F8500" = {}
+"0x8290DBE8" = {}
+"0x8290DC08" = {}
+"0x8290DC28" = {}
+"0x8290DC48" = {}
+"0x8290DC68" = {}
+"0x8290DC88" = {}
+"0x8290DCA8" = {}
+"0x829C1C98" = {}
+"0x829C1D20" = {}
+"0x829C1D48" = {}
+"0x829C1D70" = {}
+"0x829C1D98" = {}
+"0x829C21C0" = {}
+"0x829C21E0" = {}
+"0x829C21F8" = {}
+"0x829C2208" = {}
+"0x829C2218" = {}
+"0x829C2228" = {}
+"0x829C2238" = {}
+"0x829C2248" = {}
+"0x829C2258" = {}
+"0x829C2268" = {}
+"0x82A4C758" = {}
+"0x82A4C768" = {}
+"0x82A70708" = {}
+"0x82AA61F8" = {}
+"0x82B2B418" = {}
+"0x82B2B468" = {}
+"0x82B72798" = {}
+"0x82B961B0" = {}
+"0x82B97A68" = {}
+"0x82B97A78" = {}
+"0x82B97A88" = {}
+"0x82B97AA8" = {}
+"0x82BB11F0" = {}
+"0x82BB17C0" = {}
+"0x82BC9060" = {}
+"0x82BC9078" = {}
+"0x82BC9090" = {}
+"0x82BC90A8" = {}
+"0x82BC90C0" = {}
+"0x82BD3DF8" = {}
+"0x82C4C308" = {}
+"0x82C5E298" = {}
+"0x82C663D8" = {}
+"0x82C66BA0" = {}
+"0x82C678C0" = {}
+"0x82CCE6D0" = {}
+"0x82CD4310" = {}
+"0x82CDB048" = {}
+"0x82CEAF08" = {}
+"0x82D56D18" = {}
+"0x82D56D20" = {}
+"0x82D56D28" = {}
+"0x82D56D30" = {}
+"0x82D56D38" = {}
+"0x82D56D40" = {}
+"0x82D56D50" = {}
+"0x82D56D58" = {}
+"0x82D56D60" = {}
+"0x82D5B480" = {}
+"0x82D5B488" = {}
+"0x82D5B490" = {}
+"0x82D5B710" = {}
+"0x82D5B720" = {}
+"0x82D5B728" = {}
+"0x82D5B730" = {}
+"0x82D5B738" = {}
+"0x82D5F6A0" = {}
+"0x82D603D8" = {}
+"0x82D61080" = {}
+"0x82D61568" = {}
+"0x82D63DF0" = {}
+"0x82D64080" = {}
+"0x82D72F00" = {}
+"0x82D98120" = {}
+"0x82D98140" = {}
+"0x82D98188" = {}
+"0x82D981A8" = {}
+"0x82D99060" = {}
+"0x82D99078" = {}
+"0x82DAD618" = {}
+"0x82DB1CB0" = {}
+"0x82DB1CE8" = {}
+"0x82DB1D48" = {}
+"0x82DB6D60" = {}
+"0x82DBA3F8" = {}
+"0x82DC3B20" = {}
+"0x82DC3B38" = {}
+"0x82DC3B50" = {}
+"0x82DC3B68" = {}
+"0x82DC3B80" = {}
+"0x82DC3B98" = {}
+"0x82DC3BB0" = {}
+"0x82DC3BC8" = {}
+"0x82DDD7B0" = {}
+"0x82DDFFF8" = {}
+"0x82DE00B8" = {}
+"0x82DE00D0" = {}
+"0x82DF77A8" = {}
+"0x82E25120" = {}
+"0x82E30C60" = {}
+"0x82E30E50" = {}
+"0x82E495A0" = {}
+"0x82E73270" = {}
+"0x82E85838" = {}
+"0x82E8FDF8" = {}
+"0x82EB8038" = {}
+"0x82EB8568" = {}
+"0x82ECE708" = {}
+"0x82ED9D2C" = {}
+"0x82ED9DC4" = {}
+"0x82ED9E60" = {}
+"0x82ED9EF8" = {}
+"0x82EE68E8" = {}
+"0x82EE68F0" = {}
+"0x82EE68F8" = {}
+"0x82EEB540" = {}
+"0x82EEEB38" = {}
+"0x82EEEB40" = {}
+"0x82EEEB48" = {}
+"0x82EEEB50" = {}
+"0x82EEEB58" = {}
+"0x82EEFEC0" = {}
+"0x82EFBC18" = {}
+"0x82EFBC20" = {}
+"0x82EFBC28" = {}
+"0x82EFBC30" = {}
+"0x82EFBC38" = {}
+"0x82EFD548" = {}
+"0x82EFD550" = {}
+"0x82EFD558" = {}
+"0x82EFD560" = {}
+"0x82EFD568" = {}
+"0x82F1E9B0" = {}
+"0x82F2F5BC" = {}
+"0x83001388" = {}
+"0x8304A368" = {}
+# Missed while the filter took a vtable's repeated entry for a jump table (0x82DDC380: the crash on
+# the PS5's first run, 2026-11-04).
+"0x821DAF60" = {}
+"0x821DB348" = {}
+"0x8222D250" = {}
+"0x822924A8" = {}
+"0x82DDC380" = {}
+
+# Under-read switch (tools/swscan.py, Stranglehold's; Darkness II's 0x82BD8B9C bug): sub_82516AF8's bctr at
+# 0x82516C20, bounds check cmplwi r3, 0x205 = 518 cases; the codegen saw 512 and trapped (SIGILL) on the
+# last 6, which killed Crackdown 2 silently during the intro movie (crackdown2_003.log, 2026-11-04).
+[[switch_tables]]
+address = 0x82516C20
+register = 3
+labels = [0x8251F94C, 0x8251F984, 0x8251F9BC, 0x8251835C, 0x825186F8, 0x8251883C, 0x825184C4,
+          0x8251856C, 0x825185F0, 0x82518674, 0x82518A10, 0x82518A94, 0x82518980, 0x825183D4,
+          0x82518764, 0x825188A8, 0x825184FC, 0x82518598, 0x8251861C, 0x825186A0, 0x82518A3C,
+          0x82518AC0, 0x825189B0, 0x8251844C, 0x825187D0, 0x82518914, 0x82518534, 0x825185C4,
+          0x82518648, 0x825186CC, 0x82518A68, 0x82518AEC, 0x825189E0, 0x82517978, 0x82517E1C,
+          0x82517FF0, 0x82517B28, 0x82517BDC, 0x82517C9C, 0x82517D5C, 0x82518254, 0x825182D8,
+          0x825181C4, 0x82517A08, 0x82517EB8, 0x8251808C, 0x82517B64, 0x82517C1C, 0x82517CDC,
+          0x82517D9C, 0x82518280, 0x82518304, 0x825181F4, 0x82517A98, 0x82517F54, 0x82518128,
+          0x82517BA0, 0x82517C5C, 0x82517D1C, 0x82517DDC, 0x825182AC, 0x82518330, 0x82518224,
+          0x825192D4, 0x82519670, 0x825197B4, 0x8251943C, 0x825194E4, 0x82519568, 0x825195EC,
+          0x82519988, 0x82519A0C, 0x825198F8, 0x8251934C, 0x825196DC, 0x82519820, 0x82519474,
+          0x82519510, 0x82519594, 0x82519618, 0x825199B4, 0x82519A38, 0x82519928, 0x825193C4,
+          0x82519748, 0x8251988C, 0x825194AC, 0x8251953C, 0x825195C0, 0x82519644, 0x825199E0,
+          0x82519A64, 0x82519958, 0x82518B18, 0x82518EB4, 0x82518FF8, 0x82518C80, 0x82518D28,
+          0x82518DAC, 0x82518E30, 0x825191CC, 0x82519250, 0x8251913C, 0x82518B90, 0x82518F20,
+          0x82519064, 0x82518CB8, 0x82518D54, 0x82518DD8, 0x82518E5C, 0x825191F8, 0x8251927C,
+          0x8251916C, 0x82518C08, 0x82518F8C, 0x825190D0, 0x82518CF0, 0x82518D80, 0x82518E04,
+          0x82518E88, 0x82519224, 0x825192A8, 0x8251919C, 0x82519A90, 0x82519E2C, 0x82519F70,
+          0x82519BF8, 0x82519CA0, 0x82519D24, 0x82519DA8, 0x8251A144, 0x8251A1C8, 0x8251A0B4,
+          0x82519B08, 0x82519E98, 0x82519FDC, 0x82519C30, 0x82519CCC, 0x82519D50, 0x82519DD4,
+          0x8251A170, 0x8251A1F4, 0x8251A0E4, 0x82519B80, 0x82519F04, 0x8251A048, 0x82519C68,
+          0x82519CF8, 0x82519D7C, 0x82519E00, 0x8251A19C, 0x8251A220, 0x8251A114, 0x8251A24C,
+          0x8251A5E8, 0x8251A72C, 0x8251A3B4, 0x8251A45C, 0x8251A4E0, 0x8251A564, 0x8251A900,
+          0x8251A984, 0x8251A870, 0x8251A2C4, 0x8251A654, 0x8251A798, 0x8251A3EC, 0x8251A488,
+          0x8251A50C, 0x8251A590, 0x8251A92C, 0x8251A9B0, 0x8251A8A0, 0x8251A33C, 0x8251A6C0,
+          0x8251A804, 0x8251A424, 0x8251A4B4, 0x8251A538, 0x8251A5BC, 0x8251A958, 0x8251A9DC,
+          0x8251A8D0, 0x8251AA08, 0x8251ADA4, 0x8251AEE8, 0x8251AB70, 0x8251AC18, 0x8251AC9C,
+          0x8251AD20, 0x8251B0BC, 0x8251B140, 0x8251B02C, 0x8251AA80, 0x8251AE10, 0x8251AF54,
+          0x8251ABA8, 0x8251AC44, 0x8251ACC8, 0x8251AD4C, 0x8251B0E8, 0x8251B16C, 0x8251B05C,
+          0x8251AAF8, 0x8251AE7C, 0x8251AFC0, 0x8251ABE0, 0x8251AC70, 0x8251ACF4, 0x8251AD78,
+          0x8251B114, 0x8251B198, 0x8251B08C, 0x8251B1C4, 0x8251B560, 0x8251B6A4, 0x8251B32C,
+          0x8251B3D4, 0x8251B458, 0x8251B4DC, 0x8251B878, 0x8251B8FC, 0x8251B7E8, 0x8251B23C,
+          0x8251B5CC, 0x8251B710, 0x8251B364, 0x8251B400, 0x8251B484, 0x8251B508, 0x8251B8A4,
+          0x8251B928, 0x8251B818, 0x8251B2B4, 0x8251B638, 0x8251B77C, 0x8251B39C, 0x8251B42C,
+          0x8251B4B0, 0x8251B534, 0x8251B8D0, 0x8251B954, 0x8251B848, 0x8251B980, 0x8251BD1C,
+          0x8251BE60, 0x8251BAE8, 0x8251BB90, 0x8251BC14, 0x8251BC98, 0x8251C034, 0x8251C0B8,
+          0x8251BFA4, 0x8251B9F8, 0x8251BD88, 0x8251BECC, 0x8251BB20, 0x8251BBBC, 0x8251BC40,
+          0x8251BCC4, 0x8251C060, 0x8251C0E4, 0x8251BFD4, 0x8251BA70, 0x8251BDF4, 0x8251BF38,
+          0x8251BB58, 0x8251BBE8, 0x8251BC6C, 0x8251BCF0, 0x8251C08C, 0x8251C110, 0x8251C004,
+          0x8251C58C, 0x8251C6F4, 0x8251C79C, 0x8251C8D4, 0x8251C958, 0x8251C844, 0x8251C604,
+          0x8251C72C, 0x8251C7D4, 0x8251C900, 0x8251C984, 0x8251C874, 0x8251C67C, 0x8251C764,
+          0x8251C80C, 0x8251C92C, 0x8251C9B0, 0x8251C8A4, 0x8251C13C, 0x8251C2A4, 0x8251C34C,
+          0x8251C484, 0x8251C508, 0x8251C3F4, 0x8251C1B4, 0x8251C2DC, 0x8251C384, 0x8251C4B0,
+          0x8251C534, 0x8251C424, 0x8251C22C, 0x8251C314, 0x8251C3BC, 0x8251C4DC, 0x8251C560,
+          0x8251C454, 0x8251C9DC, 0x8251CB44, 0x8251CBEC, 0x8251CD24, 0x8251CDA8, 0x8251CC94,
+          0x8251CA54, 0x8251CB7C, 0x8251CC24, 0x8251CD50, 0x8251CDD4, 0x8251CCC4, 0x8251CACC,
+          0x8251CBB4, 0x8251CC5C, 0x8251CD7C, 0x8251CE00, 0x8251CCF4, 0x8251CE2C, 0x8251CF94,
+          0x8251D03C, 0x8251D174, 0x8251D1F8, 0x8251D0E4, 0x8251CEA4, 0x8251CFCC, 0x8251D074,
+          0x8251D1A0, 0x8251D224, 0x8251D114, 0x8251CF1C, 0x8251D004, 0x8251D0AC, 0x8251D1CC,
+          0x8251D250, 0x8251D144, 0x8251D27C, 0x8251D3E4, 0x8251D48C, 0x8251D5C4, 0x8251D648,
+          0x8251D534, 0x8251D2F4, 0x8251D41C, 0x8251D4C4, 0x8251D5F0, 0x8251D674, 0x8251D564,
+          0x8251D36C, 0x8251D454, 0x8251D4FC, 0x8251D61C, 0x8251D6A0, 0x8251D594, 0x8251DB1C,
+          0x8251DC84, 0x8251DD2C, 0x8251DE64, 0x8251DEE8, 0x8251DDD4, 0x8251DB94, 0x8251DCBC,
+          0x8251DD64, 0x8251DE90, 0x8251DF14, 0x8251DE04, 0x8251DC0C, 0x8251DCF4, 0x8251DD9C,
+          0x8251DEBC, 0x8251DF40, 0x8251DE34, 0x8251D6CC, 0x8251D834, 0x8251D8DC, 0x8251DA14,
+          0x8251DA98, 0x8251D984, 0x8251D744, 0x8251D86C, 0x8251D914, 0x8251DA40, 0x8251DAC4,
+          0x8251D9B4, 0x8251D7BC, 0x8251D8A4, 0x8251D94C, 0x8251DA6C, 0x8251DAF0, 0x8251D9E4,
+          0x8251DF6C, 0x8251E0D4, 0x8251E17C, 0x8251E2B4, 0x8251E338, 0x8251E224, 0x8251DFE4,
+          0x8251E10C, 0x8251E1B4, 0x8251E2E0, 0x8251E364, 0x8251E254, 0x8251E05C, 0x8251E144,
+          0x8251E1EC, 0x8251E30C, 0x8251E390, 0x8251E284, 0x8251E3BC, 0x8251E524, 0x8251E5CC,
+          0x8251E704, 0x8251E788, 0x8251E674, 0x8251E434, 0x8251E55C, 0x8251E604, 0x8251E730,
+          0x8251E7B4, 0x8251E6A4, 0x8251E4AC, 0x8251E594, 0x8251E63C, 0x8251E75C, 0x8251E7E0,
+          0x8251E6D4, 0x8251E80C, 0x8251E974, 0x8251EA1C, 0x8251EB54, 0x8251EBD8, 0x8251EAC4,
+          0x8251E884, 0x8251E9AC, 0x8251EA54, 0x8251EB80, 0x8251EC04, 0x8251EAF4, 0x8251E8FC,
+          0x8251E9E4, 0x8251EA8C, 0x8251EBAC, 0x8251EC30, 0x8251EB24, 0x8251F0AC, 0x8251F214,
+          0x8251F2BC, 0x8251F3F4, 0x8251F478, 0x8251F364, 0x8251F124, 0x8251F24C, 0x8251F2F4,
+          0x8251F420, 0x8251F4A4, 0x8251F394, 0x8251F19C, 0x8251F284, 0x8251F32C, 0x8251F44C,
+          0x8251F4D0, 0x8251F3C4, 0x8251EC5C, 0x8251EDC4, 0x8251EE6C, 0x8251EFA4, 0x8251F028,
+          0x8251EF14, 0x8251ECD4, 0x8251EDFC, 0x8251EEA4, 0x8251EFD0, 0x8251F054, 0x8251EF44,
+          0x8251ED4C, 0x8251EE34, 0x8251EEDC, 0x8251EFFC, 0x8251F080, 0x8251EF74, 0x8251F4FC,
+          0x8251F664, 0x8251F70C, 0x8251F844, 0x8251F8C8, 0x8251F7B4, 0x8251F574, 0x8251F69C,
+          0x8251F744, 0x8251F870, 0x8251F8F4, 0x8251F7E4, 0x8251F5EC, 0x8251F6D4, 0x8251F77C,
+          0x8251F89C, 0x8251F920, 0x8251F814, 0x8251743C, 0x825174D4, 0x82517564, 0x825176F0,
+          0x8251776C, 0x825175F4, 0x82517630, 0x82517670, 0x825176B0, 0x825177E8, 0x825178B0]
+
+# 60 fps (cd2_frame_rate, cd2_features.cpp): the frame clock of pacific-city-recompiled/crackdown-2-recomp
+# (BSD-3; its crackdown2/config/midasm_hooks.toml, same Title Update 5 0.0.5.1), copied as it is. The 16
+# `li rX,33` per-frame ms sites get the measured frame ms, the 10 frame-locked steps are rescaled; at
+# cd2_frame_rate 30 every hook leaves the value alone (the game as shipped).
+
+[[midasm_hook]]  # sub_823AAFE8
+address = 0x823AB418
+name = "Cd2FrameMs_823AB418"
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_823AAFE8
+address = 0x823AB474
+name = "Cd2FrameMs_823AB474"
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_82391268
+address = 0x823914B0
+name = "Cd2FrameMs_823914B0"
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_8252D318
+address = 0x8252D34C
+name = "Cd2FrameMs_8252D34C"
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_82762158
+address = 0x8276226C
+name = "Cd2FrameMs_8276226C"
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_827EA9F0
+address = 0x827EAA24
+name = "Cd2FrameMs_827EAA24"
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_823815F0
+address = 0x82381634
+name = "Cd2FrameMs_82381634"
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_8223F520
+address = 0x82240290
+name = "Cd2FrameMs_82240290"
+registers = ["r10"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_82338648
+address = 0x8233869C
+name = "Cd2FrameMs_8233869C"
+registers = ["r10"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_8220BD80
+address = 0x8220C0DC
+name = "Cd2FrameMs_8220C0DC"
+registers = ["r9"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_8278FBE0
+address = 0x8278FC88
+name = "Cd2FrameMs_8278FC88"
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_82783780
+address = 0x827837FC
+name = "Cd2FrameMs_827837FC"
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_82339150
+address = 0x823397F0
+name = "Cd2FrameMs_823397F0"
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_8224FF60
+address = 0x82250438
+name = "Cd2FrameMs_82250438"
+registers = ["r10"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_827AEAB0
+address = 0x827AEAE0
+name = "Cd2FrameMs_827AEAE0"
+registers = ["r11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_82767190
+address = 0x827671A4
+name = "Cd2FrameMs_827671A4"
+registers = ["r3"]
+after_instruction = true
+
+# Frame-locked steps the 16 ms sites don't cover (hooks_framerate.cpp, --sim_frame_fixes; Crackdown 1's
+# docs/60fps-audit.md has the same classes). Each loads or adds a fixed 30 Hz amount once per frame; the hook
+# rescales it by measured step / (1/30) when --sim_game_clock is on and leaves it alone otherwise.
+#
+# Global frame counter 0x8383A96C (`lwz r10,-22164(r9); addi r10,r10,1; stw r10,-22164(r9)` in sub_82338648,
+# the same per-frame function as ms site 0x8233869C). 38 functions use it as a 30 Hz clock: deadlines like
+# `counter > start + 30` (one second, sub_82720FD0), `(counter - t) / 30 >= 10` (sub_82835698),
+# `counter % 1800` (sub_827758C8), `start + durationMs / 1000 * 30` (sub_82721EC0). After the addi the hook
+# makes it old + whole 30 Hz ticks elapsed (Crackdown 1's --sim_frame_counter_30hz).
+[[midasm_hook]]  # sub_82338648
+address = 0x82338688
+name = "Cd2FrameCounterTick"
+registers = ["r10"]
+after_instruction = true
+
+# Crowd/NPC animation clock sub_825E4AA0 (Crackdown 1 sub_82330888): anim time [obj+88] += 1/30 (pooled
+# literal 0x82114994), or a random rate * 1/30, then wrapped at the clip length. Plays 2x fast at 60 fps.
+[[midasm_hook]]  # sub_825E4AA0, random-rate path
+address = 0x825E4CBC
+name = "Cd2ScaleStep_825E4CBC"
+registers = ["f11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_825E4AA0
+address = 0x825E4CEC
+name = "Cd2ScaleStep_825E4CEC"
+registers = ["f0"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_825E4AA0, second copy, random-rate path
+address = 0x825E4F80
+name = "Cd2ScaleStep_825E4F80"
+registers = ["f11"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_825E4AA0, second copy
+address = 0x825E4FB0
+name = "Cd2ScaleStep_825E4FB0"
+registers = ["f0"]
+after_instruction = true
+
+# sub_827338E8: [obj+3876] += 1/30 (`lfs f0,18836(r11); fadds f12,f13,f0; stfs f12,3876(r31)`).
+[[midasm_hook]]  # sub_827338E8
+address = 0x82733908
+name = "Cd2ScaleStep_82733908"
+registers = ["f0"]
+after_instruction = true
+
+# sub_82334738: [obj+2596] = x - x * 1/30 (`lfs f13,18836(r11); fnmsubs f0,f0,f13,f0`), a per-frame decay.
+[[midasm_hook]]  # sub_82334738
+address = 0x82334B2C
+name = "Cd2ScaleDecay_82334B2C"
+registers = ["f13"]
+after_instruction = true
+
+# Calls that pass a literal step as dt (f1): sub_826C9278 -> sub_8221EC40(0.033, own literal 0x820F98D4,
+# Crackdown 1 sub_823FF3B8's 0.033 timer), sub_82549940 -> virtual [vtable+1760](1/30),
+# sub_8256DCD0 -> sub_8256BB90(1/30).
+[[midasm_hook]]  # sub_826C9278
+address = 0x826C9618
+name = "Cd2ScaleStep_826C9618"
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_82549940
+address = 0x82549968
+name = "Cd2ScaleStep_82549968"
+registers = ["f1"]
+after_instruction = true
+
+[[midasm_hook]]  # sub_8256DCD0
+address = 0x8256DFC0
+name = "Cd2ScaleStep_8256DFC0"
+registers = ["f1"]
+after_instruction = true

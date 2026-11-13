@@ -1,0 +1,60 @@
+From 50c6cdb1b0c7e9163cab061fc8d813a84a9e1f34 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:35 -0500
+Subject: [PATCH 038/122] 
+ 0602-ntdll-map-unaligned-shared-sections-private.patch
+
+---
+ dlls/ntdll/unix/virtual.c | 16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index cd810f7..08990c2 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3044,6 +3044,7 @@ static NTSTATUS map_image_into_view_impl( struct file_view *view, const UNICODE_
+     {
+         static const SIZE_T sector_align = 0x1ff;
+         SIZE_T map_size, file_start, file_size, end;
++        NTSTATUS shared_status;
+ 
+         if (!sec[i].Misc.VirtualSize)
+             map_size = ROUND_SIZE( 0, sec[i].SizeOfRawData, align_mask );
+@@ -3080,15 +3081,22 @@ static NTSTATUS map_image_into_view_impl( struct file_view *view, const UNICODE_
+                             debugstr_us(nt_name), sec[i].Name, ptr + sec[i].VirtualAddress,
+                             sec[i].PointerToRawData, (int)pos, file_size, map_size,
+                             sec[i].Characteristics );
+-            if (map_file_into_view( view, shared_fd, sec[i].VirtualAddress, map_size, pos,
+-                                    VPROT_COMMITTED | VPROT_READ | VPROT_WRITE, FALSE ) != STATUS_SUCCESS)
++            shared_status = map_file_into_view( view, shared_fd, sec[i].VirtualAddress, map_size, pos,
++                                                VPROT_COMMITTED | VPROT_READ | VPROT_WRITE, FALSE );
++            /* a section that is not aligned to host pages cannot be shared between processes;
++             * map a private copy of it instead, like any other writable section */
++            if (shared_status == STATUS_INVALID_PARAMETER)
++                ERR_(module)( "%s shared section %.8s is not host page aligned, mapping a private copy\n",
++                              debugstr_us(nt_name), sec[i].Name );
++            else if (shared_status != STATUS_SUCCESS)
+             {
+                 ERR_(module)( "Could not map %s shared section %.8s\n", debugstr_us(nt_name), sec[i].Name );
+                 goto done;
+             }
+ 
+             /* check if the import directory falls inside this section */
+-            if (imports && imports->VirtualAddress >= sec[i].VirtualAddress &&
++            if (shared_status == STATUS_SUCCESS && imports &&
++                imports->VirtualAddress >= sec[i].VirtualAddress &&
+                 imports->VirtualAddress < sec[i].VirtualAddress + map_size)
+             {
+                 UINT_PTR base = imports->VirtualAddress & ~host_page_mask;
+@@ -3100,7 +3108,7 @@ static NTSTATUS map_image_into_view_impl( struct file_view *view, const UNICODE_
+                                         VPROT_COMMITTED | VPROT_READ | VPROT_WRITECOPY, FALSE );
+             }
+             pos += map_size;
+-            continue;
++            if (shared_status == STATUS_SUCCESS) continue;
+         }
+ 
+         TRACE_(module)( "mapping %s section %.8s at %p off %x size %x virt %x flags %x\n",
+-- 
+2.43.0
+

@@ -14,6 +14,8 @@
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/xam/user_profile.h>
+#include <rex/system/interfaces/graphics.h>
+#include <rex/ui/presenter.h>
 
 #include "crackdown_init.h"
 #include "ps5/cd_glyphs.h"
@@ -26,6 +28,9 @@
 #include "ps5/crackdown_menu.h"
 
 REXCVAR_DECLARE(int32_t, crackdown_locale);
+REXCVAR_DECLARE(std::string, present_effect);  // (the presenter's, ui/presenter.cpp)
+REXCVAR_DECLARE(double, present_fsr_sharpness_reduction);
+REXCVAR_DECLARE(bool, crackdown_quick_menu);  // (ps5/cd_quick_menu.cpp)
 REXCVAR_DEFINE_BOOL(crackdown_ps_buttons, true, "Crackdown",
                     "PlayStation button prompts (false: the game's Xbox 360 ones)");
 
@@ -65,11 +70,28 @@ std::optional<rex::PathConfig> CrackdownApp::OnFinalizePaths(const rex::PathConf
 #if REX_PLATFORM_PS5
   // The menu first (ps5/crackdown_menu.cpp); PLAY carries on with the start.
   cdps5::ShowMenu(imgui_drawer(), immediate_drawer(), AppRoot(defaults),
-                  [defaults, resume]() { resume(ResolvePaths(defaults)); });
+                  [this, defaults, resume]() {
+                    ApplyUpscaling();
+                    resume(ResolvePaths(defaults));
+                  });
   return std::nullopt;
 #else
   (void)resume;
   return ResolvePaths(defaults);
+#endif
+}
+
+// The menu's UPSCALING and SHARPNESS (present_effect, present_fsr_sharpness_reduction): the window's
+// presenter read them when it started, before the menu, so it gets them here (Saints Row: ReInstated's).
+void CrackdownApp::ApplyUpscaling() {
+#if REX_PLATFORM_PS5
+  if (rex::ui::Presenter* presenter = graphics_system() ? graphics_system()->presenter() : nullptr) {
+    using Config = rex::ui::Presenter::GuestOutputPaintConfig;
+    Config config = presenter->GetGuestOutputPaintConfigFromUIThread();
+    config.SetEffect(REXCVAR_GET(present_effect) == "fsr" ? Config::Effect::kFsr : Config::Effect::kBilinear);
+    config.SetFsrSharpnessReduction(float(REXCVAR_GET(present_fsr_sharpness_reduction)));
+    presenter->SetGuestOutputPaintConfigFromUIThread(config);
+  }
 #endif
 }
 
@@ -135,11 +157,18 @@ rex::PathConfig ResolvePaths(const rex::PathConfig& defaults) {
 void CrackdownApp::OnPreSetup(rex::RuntimeConfig& config) {
   // The generic Xenos GPU (Xenia's Vulkan backend): no game-specific renderer.
   if (!config.graphics && config.gpu_plugin.empty()) config.gpu_plugin = "xenos";
-  // As the PC recomp's crackdown.toml: the game reads resolved render targets on the CPU.
-  rex::cvar::SetFlagByName("readback_resolve", "fast");
+  // The game reads resolved render targets on the CPU (the PC recomp's crackdown.toml). In the same frame
+  // ("full"), not the previous one ("fast", which the PC recomp uses): with last frame's data the orbs,
+  // supply-point beams and floor waypoints were placed for last frame's camera, so they slid around
+  // whenever the camera moved (2026-11-05). Only the small resolves are read (the cap below).
+  rex::cvar::SetFlagByName("readback_resolve", "full");
   // Copy back only resolves up to 256 KB (crackdown.toml's): the large ones aren't read on the CPU
   // and copying them cost most of the frame (ci/fw_perf_fixes.py adds the cvar to the fork).
-  rex::cvar::SetFlagByName("readback_resolve_max_bytes", "262144");
+  // (the config file can raise it: "cd readback cap" log lines list what it skips)
+  // 320 KB since 2.0.0 (the user's crackdown.toml since 2026-11-11): also the two 320 KB resolves a frame the
+  // 256 KB cap skipped; the user's runs since then look right.
+  if (!rex::cvar::HasNonDefaultValue("readback_resolve_max_bytes"))
+    rex::cvar::SetFlagByName("readback_resolve_max_bytes", "327680");
   // As Max Payne 3 RePrescribed and PROTOTYPE: ReEvolution: three pipeline creation threads, not
   // 3/4 of the CPUs (a burst of new pipelines in a new district starved the game's threads), and
   // frames with a pipeline still being built shown rather than skipped.
@@ -151,6 +180,9 @@ void CrackdownApp::OnPreSetup(rex::RuntimeConfig& config) {
   // counter). Both freezes on loading (crackdown_017, crackdown_019) began right after one: the game's
   // own waits interrupted mid-way, its threads ended up waiting on each other.
   if (!rex::cvar::HasNonDefaultValue("ps5_hang_reports")) rex::cvar::SetLaunchFlag("ps5_hang_reports", "false");
+  // No CPU sampler in the user's build (SIGPROF to every thread, the game's too, every 10 ms, and a report
+  // every 30 s): off unless a toml turns it on, as The Darkness and MGR (2026-11-06).
+  if (!rex::cvar::HasNonDefaultValue("ps5_cpu_sampler")) rex::cvar::SetLaunchFlag("ps5_cpu_sampler", "false");
 }
 
 void CrackdownApp::OnPostSetup() {
@@ -178,8 +210,9 @@ void CrackdownApp::OnPostSetup() {
     cdps5::glyphs::SetMenuPictures(fs::path("/app0/game"), playstation);
   }
   // What's drawn over the game: the frame rate counter (drawing nothing while it's off, so the quick
-  // menu can turn it on), the cheats' orb markers and the quick menu (L3 + R3), the cheats as saved.
-  crackdown::cheats_ps5::Load("/app0/cheats.ini");
+  // menu can turn it on), the cheats' orb markers and the quick menu (L3 + R3), the cheats as saved
+  // (none with the menu's CHEAT MENU off: no quick menu, and no cheats).
+  if (REXCVAR_GET(crackdown_quick_menu)) crackdown::cheats_ps5::Load("/app0/cheats.ini");
   g_fps_overlay = std::make_unique<cdps5::FpsOverlay>(imgui_drawer());
   crackdown::orb_map::CreateOverlay(imgui_drawer());
   g_quick_menu = std::make_unique<cdps5::QuickMenu>(imgui_drawer());

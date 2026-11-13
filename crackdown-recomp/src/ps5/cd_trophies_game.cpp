@@ -79,7 +79,13 @@ void TrophyPopup::Push(const rex::system::AchievementEvent& event) {
   if (runtime_ && runtime_->kernel_state()) {
     auto& m = runtime_->kernel_state()->achievements();
     int earnable = 0, earned = 0;
+#if defined(CD_GAME) && CD_GAME == 2
+    constexpr int kGame = 2;
+#else
+    constexpr int kGame = 1;
+#endif
     for (const auto& a : m.ListAchievements()) {
+      if (trophies::Online(kGame, a.id)) continue;  // (co-op / multiplayer: not part of the platinum)
       ++earnable;
       earned += m.IsUnlocked(a.id) ? 1 : 0;
     }

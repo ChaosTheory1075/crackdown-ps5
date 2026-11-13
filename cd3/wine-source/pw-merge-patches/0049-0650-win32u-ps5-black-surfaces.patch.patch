@@ -1,0 +1,31 @@
+From 0a509212cfdfaffefdd937b86d4314e1522acba9 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:35 -0500
+Subject: [PATCH 049/122] 0650-win32u-ps5-black-surfaces.patch
+
+---
+ dlls/win32u/dce.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/dlls/win32u/dce.c b/dlls/win32u/dce.c
+index 67d3dc8..db43e33 100644
+--- a/dlls/win32u/dce.c
++++ b/dlls/win32u/dce.c
+@@ -576,7 +576,14 @@ struct window_surface *window_surface_create( const struct window_surface_funcs
+ 
+     pthread_mutex_init( &surface->mutex, NULL );
+ 
++#ifdef WINE_PS5_USER_DRIVER
++    /* The PS5 shows a window as soon as it is flushed, and a game's window
++     * that Direct3D draws into is never painted: black, as a full-screen
++     * window shows on a real display, rather than a white rectangle. */
++    memset( window_surface_get_color( surface, info ), 0, info->bmiHeader.biSizeImage );
++#else
+     memset( window_surface_get_color( surface, info ), 0xff, info->bmiHeader.biSizeImage );
++#endif
+ 
+     TRACE( "created surface %p for hwnd %p rect %s\n", surface, hwnd, wine_dbgstr_rect( &surface->rect ) );
+     return surface;
+-- 
+2.43.0
+

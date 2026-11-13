@@ -1,0 +1,111 @@
+From 66a52cf346aca55571b26341612319be81c9f40d Mon Sep 17 00:00:00 2001
+From: ChaosTheory1075 <252520959+ChaosTheory1075@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 21:05:52 -0500
+Subject: [PATCH 115/122] PS5: the free-area walk leaves a gap the kernel
+ grants nothing in; the kernel places what no area takes
+
+Crackdown 3 hung for hours stepping a 96 KB top-down reservation 64 KB at a time through the ~448 GiB above the high area, every try refused.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ dlls/ntdll/unix/virtual.c | 54 +++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 52 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 70d91a9..d5601c4 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -815,10 +815,19 @@ extern int sceKernelVirtualQuery( const void *addr, int flags, void *info, size_
+ #define PS5_HIGH_RESERVE_MAX ((size_t)512 << 30)
+ #endif
+ 
++#ifdef __PROSPERO__
++/* [cd3] set by anon_mmap_tryfixed when the kernel refused a range no mapping holds (a hole it won't grant) */
++static int ps5_reserve_hole;
++#endif
++
+ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+ {
+     void *ptr;
+ 
++#ifdef __PROSPERO__
++    ps5_reserve_hole = 0;
++#endif
++
+ #ifdef MAP_FIXED_NOREPLACE
+     ptr = mmap( start, size, prot, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
+ #elif defined(MAP_TRYFIXED)
+@@ -846,8 +855,14 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+         memset( &info, 0, sizeof(info) );
+         query = sceKernelVirtualQuery( start, 1, &info, sizeof(info) );
+         if (query || (!info.protection && !info.flags && (char *)info.end >= (char *)start + size))
+-            ERR( "reservation refused for %p-%p, which no mapping holds (query %d)\n",
+-                 start, (char *)start + size, query );
++        {
++            static unsigned int holes;
++            ps5_reserve_hole = 1;
++            /* the free-area walk can hit thousands of these in a row: log the first ones and every 4096th */
++            if (holes++ < 32 || !(holes & 4095))
++                ERR( "reservation refused for %p-%p, which no mapping holds (query %d, %u so far)\n",
++                     start, (char *)start + size, query, holes );
++        }
+         else
+             ERR( "reservation refused for %p-%p: %p-%p is \"%.31s\", protection %#x, flags %#x\n",
+                  start, (char *)start + size, info.start, info.end, info.name,
+@@ -1681,9 +1696,22 @@ static struct wine_rb_entry *find_view_inside_range( void **base_ptr, void **end
+ static void* try_map_free_area( void *base, void *end, ptrdiff_t step,
+                                 void *start, size_t size, int unix_prot )
+ {
++#ifdef __PROSPERO__
++    unsigned int holes = 0;
++#endif
+     while (start && base <= start && (char*)start + size <= (char*)end)
+     {
+         if (anon_mmap_tryfixed( start, size, unix_prot, 0 ) != MAP_FAILED) return start;
++#ifdef __PROSPERO__
++        /* [cd3] the kernel grants no reservation in a hole: stepping 64 KB at a time through the ~448 GiB above
++         * the high area takes hours (Crackdown 3 hung there). After 16 holes in a row, leave this gap. */
++        if (ps5_reserve_hole && ++holes >= 16)
++        {
++            ERR( "kernel grants nothing at %p-%p, leaving the gap %p-%p\n", start, (char *)start + size, base, end );
++            return NULL;
++        }
++        if (!ps5_reserve_hole) holes = 0;
++#endif
+         TRACE( "Found free area is already mapped, start %p.\n", start );
+         if (errno != EEXIST)
+         {
+@@ -2409,8 +2437,30 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
+         {
+             TRACE( "got mem with map_free_area %p-%p\n", ptr, (char *)ptr + size );
+         }
++#ifdef __PROSPERO__
++        /* [cd3] no reserved or free area would take it: the kernel places it (in the range asked for) */
++        else if ((ptr = anon_mmap_alloc( view_size, unix_prot )) != MAP_FAILED &&
++                 (char *)ptr >= (char *)start && (char *)ptr + view_size <= (char *)end)
++        {
++            static unsigned int logged;
++            ptr = unmap_extra_space( ptr, view_size, host_size, align_mask );
++            if (logged++ < 4)
++            {
++                unsigned int i;
++                ERR( "no reserved/free area for %p bytes (top_down %d, range %p-%p): kernel placed it at %p; areas:\n",
++                     (void *)size, top_down, start, end, ptr );
++                for (i = 0; i < mem_areas_count && i < 48; i++)
++                    ERR( "  area %p state %d\n", mem_area_base( i ), mem_area_state( i ) );
++            }
++        }
++#endif
+         else if (start > address_space_start || end < host_addr_space_limit || top_down)
++        {
++#ifdef __PROSPERO__
++            if (ptr != MAP_FAILED && ptr) munmap( ptr, view_size );
++#endif
+             return STATUS_NO_MEMORY;
++        }
+         else
+         {
+             if ((ptr = anon_mmap_alloc( view_size, unix_prot )) == MAP_FAILED)
+-- 
+2.43.0
+

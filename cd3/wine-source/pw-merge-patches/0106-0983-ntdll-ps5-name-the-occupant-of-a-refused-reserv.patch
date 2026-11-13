@@ -1,0 +1,55 @@
+From eecf72574473c7c0f4f0df3f2d0510fc377b1091 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:39 -0500
+Subject: [PATCH 106/122] 
+ 0983-ntdll-ps5-name-the-occupant-of-a-refused-reservation.patch
+
+---
+ dlls/ntdll/unix/virtual.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index c91cc4c..f03d53f 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -800,6 +800,7 @@ static void mem_area_remove_view( struct file_view *view )
+  * mmap( NULL ), whose placement region fills after a few hundred MiB, a
+  * reservation can cover the whole low 4 GiB that WoW64 needs. */
+ extern int sceKernelReserveVirtualRange( void **addr, size_t size, int flags, size_t align );
++extern int sceKernelVirtualQuery( const void *addr, int flags, void *info, size_t size );
+ #define PS5_MAP_FIXED        0x10
+ #define PS5_MAP_NO_OVERWRITE 0x80
+ #define PS5_HEAP_RESERVE     0x4000000
+@@ -828,6 +829,29 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+     ptr = start;
+     if (sceKernelReserveVirtualRange( &ptr, size, PS5_MAP_FIXED | PS5_MAP_NO_OVERWRITE, host_page_size ))
+     {
++        /* The kernel answers ENOMEM (0x8002000c) both for a range another
++         * mapping holds and for one it cannot grant, so the return code
++         * alone does not say which, and the callers below must see EEXIST
++         * for a collision either way. Name the occupant instead, so a log
++         * tells the two apart: a query reporting protection, flags and a
++         * name describes a mapping, while a cleared record covering the
++         * whole request describes a hole, meaning the reservation was
++         * refused rather than blocked. This matters most at a fixed base,
++         * where a title's own image lying across a program's preferred base
++         * is indistinguishable from an exhausted address space. */
++        struct { void *start, *end; int64_t offset; int32_t protection, memory_type;
++                 uint8_t flags; char name[32]; } info;
++        int query;
++
++        memset( &info, 0, sizeof(info) );
++        query = sceKernelVirtualQuery( start, 1, &info, sizeof(info) );
++        if (query || (!info.protection && !info.flags && (char *)info.end >= (char *)start + size))
++            ERR( "reservation refused for %p-%p, which no mapping holds (query %d)\n",
++                 start, (char *)start + size, query );
++        else
++            ERR( "reservation refused for %p-%p: %p-%p is \"%.31s\", protection %#x, flags %#x\n",
++                 start, (char *)start + size, info.start, info.end, info.name,
++                 info.protection, info.flags );
+         errno = EEXIST;
+         return MAP_FAILED;
+     }
+-- 
+2.43.0
+

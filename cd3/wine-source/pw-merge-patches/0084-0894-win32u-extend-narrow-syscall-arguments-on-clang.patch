@@ -1,0 +1,53 @@
+From 58bd244b744a0c8b6f0fd5d7c382060594376e6c Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:37 -0500
+Subject: [PATCH 084/122] 
+ 0894-win32u-extend-narrow-syscall-arguments-on-clang.patch
+
+---
+ dlls/win32u/syscall.c | 29 +++++++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/dlls/win32u/syscall.c b/dlls/win32u/syscall.c
+index 5ce0de5..47b9d76 100644
+--- a/dlls/win32u/syscall.c
++++ b/dlls/win32u/syscall.c
+@@ -36,6 +36,35 @@
+ 
+ ULONG_PTR zero_bits = 0;
+ 
++#if defined(__x86_64__) && defined(__clang__)
++
++/* Clang assumes that parameters narrower than 32 bits arrive extended by the
++ * caller; the Windows ABI leaves the bits above them undefined. */
++
++#define WRAP_FUNC(name,code) \
++    extern NTSTATUS wrap_##name(void); \
++    __ASM_GLOBAL_FUNC( wrap_##name, code "jmp " __ASM_NAME(#name) )
++
++WRAP_FUNC( NtGdiDoPalette, "movzwl %si,%esi\n\tmovzwl %dx,%edx\n\t" ) /* WORD, WORD */
++WRAP_FUNC( NtUserSelectPalette, "movzwl %dx,%edx\n\t" ) /* WORD */
++WRAP_FUNC( NtUserSetClassWord, "movzwl %dx,%edx\n\t" ) /* WORD */
++WRAP_FUNC( NtUserSetLayeredWindowAttributes, "movzbl %dl,%edx\n\t" ) /* BYTE */
++WRAP_FUNC( NtUserSetWindowFNID, "movzwl %si,%esi\n\t" ) /* WORD */
++WRAP_FUNC( NtUserSetWindowWord, "movzwl %dx,%edx\n\t" ) /* WORD */
++WRAP_FUNC( NtUserVkKeyScanEx, "movzwl %di,%edi\n\t" ) /* WCHAR */
++
++#define NtGdiDoPalette wrap_NtGdiDoPalette
++#define NtUserSelectPalette wrap_NtUserSelectPalette
++#define NtUserSetClassWord wrap_NtUserSetClassWord
++#define NtUserSetLayeredWindowAttributes wrap_NtUserSetLayeredWindowAttributes
++#define NtUserSetWindowFNID wrap_NtUserSetWindowFNID
++#define NtUserSetWindowWord wrap_NtUserSetWindowWord
++#define NtUserVkKeyScanEx wrap_NtUserVkKeyScanEx
++
++#undef WRAP_FUNC
++
++#endif  /* __x86_64__ && __clang__ */
++
+ #if defined(__aarch64__) && defined(__APPLE__)
+ 
+ /* macOS doesn't follow the standard ABI for stack packing: types
+-- 
+2.43.0
+

@@ -1,0 +1,36 @@
+From f687faeeb9f04a2ca741e54371fbd7bd135e4692 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:34 -0500
+Subject: [PATCH 026/122] 0510-ntdll-ps5-host-page-size.patch
+
+---
+ dlls/ntdll/unix/virtual.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 23b3ec4..f1aee42 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -167,7 +167,9 @@ static const UINT page_shift = 12;
+ static const UINT_PTR page_mask = 0xfff;
+ static const UINT_PTR granularity_mask = 0xffff;
+ 
+-#ifdef __aarch64__
++/* PS5 hosts use 16 KiB pages: keep 4 KiB Windows pages over a larger host
++ * page, the same scheme as 16 KiB-page aarch64 hosts. */
++#if defined(__aarch64__) || defined(__PROSPERO__)
+ static UINT_PTR host_page_size;
+ static UINT_PTR host_page_mask;
+ #else
+@@ -3278,7 +3280,7 @@ void virtual_init(void)
+     pthread_mutex_init( &virtual_mutex, &attr );
+     pthread_mutexattr_destroy( &attr );
+ 
+-#ifdef __aarch64__
++#if defined(__aarch64__) || defined(__PROSPERO__)
+     host_page_size = sysconf( _SC_PAGESIZE );
+     host_page_mask = host_page_size - 1;
+     TRACE( "host page size: %uk\n", (UINT)host_page_size / 1024 );
+-- 
+2.43.0
+

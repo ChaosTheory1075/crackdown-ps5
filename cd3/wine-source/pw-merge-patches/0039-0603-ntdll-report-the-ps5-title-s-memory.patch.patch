@@ -1,0 +1,73 @@
+From 912eee48e3836050f2b576c3a450b85b82219102 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:35 -0500
+Subject: [PATCH 039/122] 0603-ntdll-report-the-ps5-title-s-memory.patch
+
+---
+ dlls/ntdll/unix/system.c  | 22 ++++++++++++++++++++++
+ dlls/ntdll/unix/virtual.c |  9 ++++++++-
+ 2 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
+index c6af68c..341f802 100644
+--- a/dlls/ntdll/unix/system.c
++++ b/dlls/ntdll/unix/system.c
+@@ -2550,6 +2550,11 @@ static NTSTATUS get_firmware_info( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULON
+     }
+ }
+ 
++#ifdef __PROSPERO__
++/* wine/ps5/pw_wine_dmem_ps5.c: the title's memory, not the console's. */
++extern void __wine_ps5_memory_budget( unsigned long long *total, unsigned long long *available );
++#endif
++
+ static void get_performance_info( SYSTEM_PERFORMANCE_INFORMATION *info )
+ {
+     unsigned long long totalram = 0, freeram = 0, totalswap = 0, freeswap = 0;
+@@ -2711,6 +2716,23 @@ static void get_performance_info( SYSTEM_PERFORMANCE_INFORMATION *info )
+     }
+ #endif
+ 
++#ifdef __PROSPERO__
++    {
++        /* The sandbox's BSD readings may be zero. Use the title's memory
++         * budget and an equally sized synthetic page-file budget; this
++         * does not create disk-backed swap. */
++        static int logged;
++        unsigned long long sysctl_total = totalram, sysctl_free = freeram;
++
++        __wine_ps5_memory_budget( &totalram, &freeram );
++        totalswap = totalram;
++        freeswap = freeram;
++        if (!__atomic_exchange_n( &logged, 1, __ATOMIC_RELAXED ))
++            MESSAGE( "wine: memory %llu MiB, %llu MiB free, page file the same (sysctl %llu MiB, %llu MiB free)\n",
++                     totalram >> 20, freeram >> 20, sysctl_total >> 20, sysctl_free >> 20 );
++    }
++#endif
++
+     /* Titan Quest refuses to run if TotalPageFile <= TotalPhys */
+     if (!totalswap) totalswap = page_size;
+ 
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 08990c2..52f6c38 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3686,7 +3686,14 @@ UINT_PTR get_host_page_size(void)
+  */
+ void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 )
+ {
+-#if defined(HAVE_SYSINFO) \
++#ifdef __PROSPERO__
++    /* Include MmLowestPhysicalPage below when reporting the title's budget. */
++    extern void __wine_ps5_memory_budget( unsigned long long *total, unsigned long long *available );
++    unsigned long long total, available;
++
++    __wine_ps5_memory_budget( &total, &available );
++    info->MmHighestPhysicalPage = max(1, total / page_size) + 1;
++#elif defined(HAVE_SYSINFO) \
+     && defined(HAVE_STRUCT_SYSINFO_TOTALRAM) && defined(HAVE_STRUCT_SYSINFO_MEM_UNIT)
+     struct sysinfo sinfo;
+ 
+-- 
+2.43.0
+

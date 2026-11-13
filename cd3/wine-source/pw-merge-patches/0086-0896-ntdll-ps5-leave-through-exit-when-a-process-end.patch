@@ -1,0 +1,37 @@
+From b810b645e95fce7cbf21166e32912e1539c59817 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:38 -0500
+Subject: [PATCH 086/122] 
+ 0896-ntdll-ps5-leave-through-exit-when-a-process-ends-itself.patch
+
+---
+ dlls/ntdll/unix/process.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/dlls/ntdll/unix/process.c b/dlls/ntdll/unix/process.c
+index 3c39917..a45ec8e 100644
+--- a/dlls/ntdll/unix/process.c
++++ b/dlls/ntdll/unix/process.c
+@@ -1031,7 +1031,19 @@ NTSTATUS WINAPI NtTerminateProcess( HANDLE handle, LONG exit_code )
+     {
+         if (!handle) process_exiting = TRUE;
+         else if (process_exiting) exit_process( exit_code );
++#ifdef __PROSPERO__
++        else
++        {
++            /* _exit skips the exit handlers a title restarts into its
++             * launcher from, so an unhandled exception took the whole title
++             * down. End the other threads first, as ExitProcess does, then
++             * leave through exit(). */
++            NtTerminateProcess( 0, exit_code );
++            exit_process( exit_code );
++        }
++#else
+         else abort_process( exit_code );
++#endif
+     }
+     return ret;
+ }
+-- 
+2.43.0
+

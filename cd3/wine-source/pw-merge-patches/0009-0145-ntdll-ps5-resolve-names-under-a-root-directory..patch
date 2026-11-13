@@ -1,0 +1,65 @@
+From 571c9e37c4a93a62373c0be13b1d1af01cd4e87c Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:33 -0500
+Subject: [PATCH 009/122] 
+ 0145-ntdll-ps5-resolve-names-under-a-root-directory.patch
+
+---
+ dlls/ntdll/unix/file.c | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 3077bfe..3155aa6 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -2601,6 +2601,31 @@ static int enter_directory( HANDLE handle, int fd )
+ }
+ 
+ 
++#ifdef __PROSPERO__
++extern void pw_cwd_track( int fd, const char *absolute );
++#endif
++
++/***********************************************************************
++ *           track_root_directory
++ *
++ * Let the *at() calls resolve names relative to a root directory's descriptor.
++ */
++static void track_root_directory( HANDLE handle, int fd )
++{
++#ifdef __PROSPERO__
++    char *unix_name;
++
++    /* The descriptor came from the in-process server, so this module's
++     * working-directory emulation knows no path for it, and openat() or
++     * fstatat() relative to it fail with EBADF, which callers see as
++     * STATUS_INVALID_HANDLE: record the name the server opened it with. */
++    if (server_get_unix_name( handle, &unix_name )) return;
++    pw_cwd_track( fd, unix_name );
++    free( unix_name );
++#endif
++}
++
++
+ /******************************************************************************
+  *              NtQueryDirectoryFile   (NTDLL.@)
+  */
+@@ -3217,6 +3242,7 @@ static NTSTATUS file_id_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char *
+         goto done;
+     }
+ 
++    track_root_directory( attr->RootDirectory, root_fd );
+     fstat( root_fd, &root_st );
+     if (root_st.st_ino == file_id)  /* shortcut for "." */
+     {
+@@ -3576,6 +3602,7 @@ static NTSTATUS nt_to_unix_file_name( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *n
+         }
+         else
+         {
++            track_root_directory( attr->RootDirectory, root_fd );
+             status = lookup_unix_name( root_fd, attr, nt_name, 0, &unix_name, unix_len,
+                                        1, disposition, open_reparse, FALSE, 0 );
+             if (needs_close) close( root_fd );
+-- 
+2.43.0
+

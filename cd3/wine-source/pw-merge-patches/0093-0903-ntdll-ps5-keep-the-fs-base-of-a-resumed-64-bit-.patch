@@ -1,0 +1,85 @@
+From 347fcf358896f55d9b51890cf1c10f04c9c0eb2e Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:38 -0500
+Subject: [PATCH 093/122] 
+ 0903-ntdll-ps5-keep-the-fs-base-of-a-resumed-64-bit-thread.patch
+
+---
+ dlls/ntdll/unix/signal_x86_64.c | 33 +++++++++++++++++++++++++++------
+ 1 file changed, 27 insertions(+), 6 deletions(-)
+
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index 6932f44..da437ce 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -991,6 +991,24 @@ static inline struct thread_data *init_handler( void *sigcontext )
+ }
+ 
+ 
++#ifdef __PROSPERO__
++/* The kernel restores the FS base saved in the frame on sigreturn. A context
++ * that the handler sends to Wine's 64-bit code (the exception dispatcher, or
++ * a 64-bit context set on the thread) needs the host's. A thread resumed
++ * where it was keeps the one it had: 64-bit code is not always on the host
++ * FS, since the native WoW64 CPU sets the guest's just before it switches to
++ * 32-bit code, and forcing the host's there sent the thread into its 32-bit
++ * code with the host FS (GetCurrentThreadId reading host memory). */
++static inline void pw_set_host_fs( struct thread_data *data, ucontext_t *sigcontext )
++{
++    struct amd64_thread_data *amd64_data = amd64_thread_data( data );
++
++    if (amd64_data && amd64_data->pthread_teb && CS_sig(sigcontext) == cs64_sel)
++        FSBASE_sig(sigcontext) = (uintptr_t)amd64_data->pthread_teb;
++}
++#endif
++
++
+ /***********************************************************************
+  *           leave_handler
+  */
+@@ -999,12 +1017,6 @@ static inline void leave_handler( struct thread_data *data, ucontext_t *sigconte
+     struct amd64_thread_data *amd64_data = amd64_thread_data( data );
+ 
+     if (!amd64_data) return;
+-#ifdef __PROSPERO__
+-    /* The kernel restores the saved FS base on sigreturn. A fault raised
+-     * from CS33 may now target Wine's CS43 exception dispatcher instead. */
+-    if (CS_sig(sigcontext) == cs64_sel && amd64_data->pthread_teb)
+-        FSBASE_sig(sigcontext) = (uintptr_t)amd64_data->pthread_teb;
+-#endif
+ #ifdef __linux__
+     if (!is_inside_signal_stack( data, (void *)RSP_sig(sigcontext )) &&
+         !is_inside_syscall( data, RSP_sig(sigcontext) ))
+@@ -1224,6 +1236,9 @@ static void restore_context( struct thread_data *data, const struct xcontext *xc
+ {
+     const CONTEXT *context = &xcontext->c;
+     struct amd64_thread_data *amd64_data = amd64_thread_data( data );
++#ifdef __PROSPERO__
++    BOOL resumed = RIP_sig(sigcontext) == context->Rip && CS_sig(sigcontext) == context->SegCs;
++#endif
+ 
+     if (amd64_data)
+     {
+@@ -1236,6 +1251,9 @@ static void restore_context( struct thread_data *data, const struct xcontext *xc
+     }
+     set_sigcontext( context, sigcontext );
+     if (FPU_sig(sigcontext)) memcpy( FPU_sig(sigcontext), &context->FltSave, sizeof(context->FltSave) );
++#ifdef __PROSPERO__
++    if (!resumed) pw_set_host_fs( data, sigcontext );
++#endif
+     leave_handler( data, sigcontext );
+ }
+ 
+@@ -1787,6 +1805,9 @@ static void setup_raise_exception( struct thread_data *data, ucontext_t *sigcont
+     }
+ 
+     CS_sig(sigcontext)  = cs64_sel;
++#ifdef __PROSPERO__
++    pw_set_host_fs( data, sigcontext );
++#endif
+     RIP_sig(sigcontext) = (ULONG_PTR)pKiUserExceptionDispatcher;
+     RSP_sig(sigcontext) = (ULONG_PTR)stack;
+     /* clear single-step, direction, and align check flag */
+-- 
+2.43.0
+

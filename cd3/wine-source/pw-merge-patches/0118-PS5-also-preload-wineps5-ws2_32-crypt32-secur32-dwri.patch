@@ -1,0 +1,31 @@
+From 41bff92bb34d9e1d5c17aba87e31de992404a157 Mon Sep 17 00:00:00 2001
+From: local <local@localhost>
+Date: Wed, 11 Nov 2026 12:01:12 -0500
+Subject: [PATCH 118/122] PS5: also preload wineps5, ws2_32, crypt32, secur32,
+ dwrite
+
+---
+ dlls/ntdll/unix/virtual.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 64f6ddd..c5f718c 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -1091,11 +1091,11 @@ static NTSTATUS get_unixlib_funcs( void *so_handle, BOOL wow, const void **funcs
+ #ifdef __PROSPERO__
+ /* PS5: a title that fills the top of the address space (Crackdown 3: UE4's pools) leaves the
+  * kernel no room for a PRX loaded later, and load_prx fails with EINVAL (0x16): winevulkan and
+- * xinput1_3 then never load and DXVK finds no Vulkan. Load them right after win32u's unix lib,
++ * xinput1_3 then never load and DXVK finds no Vulkan (wineps5: no audio driver, a crash). Load them right after win32u's unix lib,
+  * while there is room; the later dlopen of the same path finds them already loaded. */
+ static void ps5_preload_unixlibs( const char *dir )
+ {
+-    static const char * const names[] = { "winevulkan.so", "xinput1_3.so" };
++    static const char * const names[] = { "winevulkan.so", "xinput1_3.so", "wineps5.so", "ws2_32.so", "crypt32.so", "secur32.so", "dwrite.so" };
+     static int done;
+     char path[1024];
+     unsigned int i;
+-- 
+2.43.0
+

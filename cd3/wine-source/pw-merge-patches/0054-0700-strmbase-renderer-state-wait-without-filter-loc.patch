@@ -1,0 +1,57 @@
+From 431b4d590f461e84094c290724a3193f6836ab80 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:36 -0500
+Subject: [PATCH 054/122] 
+ 0700-strmbase-renderer-state-wait-without-filter-lock.patch
+
+---
+ dlls/quartz/dsoundrender.c |  7 ++++++-
+ libs/strmbase/renderer.c   | 13 +++++++++++--
+ 2 files changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/dlls/quartz/dsoundrender.c b/dlls/quartz/dsoundrender.c
+index e72b743..e6ed8a9 100644
+--- a/dlls/quartz/dsoundrender.c
++++ b/dlls/quartz/dsoundrender.c
+@@ -743,8 +743,13 @@ static HRESULT dsound_render_cleanup_stream(struct strmbase_filter *iface)
+ static HRESULT dsound_render_wait_state(struct strmbase_filter *iface, DWORD timeout)
+ {
+     struct dsound_render *filter = impl_from_strmbase_filter(iface);
++    DWORD ret;
+ 
+-    if (WaitForSingleObject(filter->state_event, timeout) == WAIT_TIMEOUT)
++    /* As renderer_wait_state(): wait without the filter lock GetState() holds. */
++    LeaveCriticalSection(&filter->filter.filter_cs);
++    ret = WaitForSingleObject(filter->state_event, timeout);
++    EnterCriticalSection(&filter->filter.filter_cs);
++    if (ret == WAIT_TIMEOUT)
+         return VFW_S_STATE_INTERMEDIATE;
+     return S_OK;
+ }
+diff --git a/libs/strmbase/renderer.c b/libs/strmbase/renderer.c
+index 7305599..f52ac29 100644
+--- a/libs/strmbase/renderer.c
++++ b/libs/strmbase/renderer.c
+@@ -292,8 +292,17 @@ static HRESULT renderer_cleanup_stream(struct strmbase_filter *iface)
+ static HRESULT renderer_wait_state(struct strmbase_filter *iface, DWORD timeout)
+ {
+     struct strmbase_renderer *filter = impl_from_strmbase_filter(iface);
+-
+-    if (WaitForSingleObject(filter->state_event, timeout) == WAIT_TIMEOUT)
++    DWORD ret;
++
++    /* GetState() calls this with the filter lock held. Wait without it: the
++     * streaming thread may need it to finish pausing (a decoder asking the
++     * sink pin about its connection before the first sample), and a caller
++     * polling GetState() with a timeout would otherwise hold it nearly all
++     * the time, so a slow-to-wake streaming thread never gets it. */
++    LeaveCriticalSection(&filter->filter.filter_cs);
++    ret = WaitForSingleObject(filter->state_event, timeout);
++    EnterCriticalSection(&filter->filter.filter_cs);
++    if (ret == WAIT_TIMEOUT)
+         return VFW_S_STATE_INTERMEDIATE;
+     return S_OK;
+ }
+-- 
+2.43.0
+

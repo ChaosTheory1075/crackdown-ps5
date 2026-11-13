@@ -1,0 +1,45 @@
+From 94d2fb19f90c66bcea34136bf6fbd971a8051a40 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:33 -0500
+Subject: [PATCH 006/122] 0120-server-ps5-default-audio-driver.patch
+
+---
+ server/registry.c | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/server/registry.c b/server/registry.c
+index e71d023..2444e20 100644
+--- a/server/registry.c
++++ b/server/registry.c
+@@ -1916,6 +1916,28 @@ void init_registry(void)
+     free( current_user_path );
+     load_init_registry_from_file( "user.reg", hkcu );
+ 
++#ifdef __PROSPERO__
++    /* The console has one audio device, which the PS5 driver (wineps5)
++     * plays through the title; none in mmdevapi's default list can load.
++     * A prefix that names its own audio drivers keeps them. */
++    {
++        static const WCHAR driversW[] = {'S','o','f','t','w','a','r','e','\\','W','i','n','e','\\',
++                                         'D','r','i','v','e','r','s'};
++        static const WCHAR audioW[] = {'A','u','d','i','o'};
++        static const WCHAR ps5W[] = {'p','s','5',0};
++        static const struct unicode_str drivers_name = { driversW, sizeof(driversW) };
++        static const struct unicode_str audio_name = { audioW, sizeof(audioW) };
++        int index;
++
++        if ((key = create_key_recursive( hkcu, drivers_name, current_time )))
++        {
++            if (!find_value( key, audio_name, &index ))
++                set_value( key, audio_name, REG_SZ, ps5W, sizeof(ps5W) );
++            release_object( key );
++        }
++    }
++#endif
++
+     /* set the shared flag on Software\Classes\Wow6432Node for all platforms */
+     for (i = 1; i < supported_machines_count; i++)
+     {
+-- 
+2.43.0
+

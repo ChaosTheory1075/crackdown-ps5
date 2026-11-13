@@ -1,0 +1,43 @@
+From 8d80b58134787eb6375566fea513c0f4e05f38db Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:34 -0500
+Subject: [PATCH 028/122] 
+ 0530-ntdll-syscall-dispatcher-slot-in-large-host-page.patch
+
+---
+ dlls/ntdll/unix/signal_x86_64.c | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index 637e950..adce092 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -2893,8 +2893,23 @@ void signal_init_process( TEB *teb )
+ 
+     /* sneak in a syscall dispatcher pointer at a fixed address (7ffe1000) */
+     ptr = (char *)user_shared_data + page_size;
+-    anon_mmap_fixed( ptr, page_size, PROT_READ | PROT_WRITE, 0 );
+-    *(void **)ptr = __wine_syscall_dispatcher;
++    if ((size_t)sysconf( _SC_PAGESIZE ) > page_size)
++    {
++        /* With host pages larger than 4 KiB (16 KiB on PS5) this slot shares
++         * a host page with KUSER_SHARED_DATA, which is already mapped as a
++         * read-only view of the USD section (the server sizes that section
++         * to a host page). Store the pointer through that view. */
++        const size_t host_page = sysconf( _SC_PAGESIZE );
++
++        mprotect( user_shared_data, host_page, PROT_READ | PROT_WRITE );
++        *(void **)ptr = __wine_syscall_dispatcher;
++        mprotect( user_shared_data, host_page, PROT_READ );
++    }
++    else
++    {
++        anon_mmap_fixed( ptr, page_size, PROT_READ | PROT_WRITE, 0 );
++        *(void **)ptr = __wine_syscall_dispatcher;
++    }
+ 
+     __asm__( "movw %%cs,%0" : "=m" (cs64_sel) );
+     __asm__( "movw %%ss,%0" : "=m" (ds64_sel) );
+-- 
+2.43.0
+

@@ -1,0 +1,25 @@
+From f517d82d5c44345f1932aed4a4fc1ad3e7e475d4 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:33 -0500
+Subject: [PATCH 019/122] 
+ 0456-win32u-vulkan-keep-swapchain-chain-when-scaling.patch
+
+---
+ dlls/win32u/vulkan.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+index 221bb14..ab14b78 100644
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -1919,6 +1919,7 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
+         physical_device->extensions.has_VK_KHR_swapchain_maintenance1)
+     {
+         scaling.scalingBehavior = VK_PRESENT_SCALING_STRETCH_BIT_EXT;
++        scaling.pNext = create_info_host.pNext;
+         create_info_host.pNext = &scaling;
+     }
+ 
+-- 
+2.43.0
+

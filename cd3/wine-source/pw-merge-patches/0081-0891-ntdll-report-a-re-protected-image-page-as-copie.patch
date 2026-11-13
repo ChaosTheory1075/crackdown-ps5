@@ -1,0 +1,34 @@
+From ed5e47abc02beb2d24205f25d6d04ff291dc2f1b Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:37 -0500
+Subject: [PATCH 081/122] 
+ 0891-ntdll-report-a-re-protected-image-page-as-copied.patch
+
+---
+ dlls/ntdll/unix/virtual.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index a7eae72..a77a15f 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -5636,7 +5636,15 @@ NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T
+         /* Make sure all the pages are committed */
+         if (get_committed_size( view, base, size, &vprot, VPROT_COMMITTED ) >= size && (vprot & VPROT_COMMITTED))
+         {
+-            old = get_win32_prot( vprot, view->protect );
++            /* Windows reports a writable image page as PAGE_READWRITE once
++             * it has been written, and the program that re-protects one has
++             * written it: its data lives there. Wine maps such pages writable
++             * from the start and never sees the write, so report the copied
++             * form; Chromium checks for exactly PAGE_READWRITE here. */
++            if ((view->protect & SEC_IMAGE) && (vprot & VPROT_WRITECOPY))
++                old = get_win32_prot( (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE, view->protect );
++            else
++                old = get_win32_prot( vprot, view->protect );
+             status = set_protection( view, base, size, new_prot );
+         }
+         else status = STATUS_NOT_COMMITTED;
+-- 
+2.43.0
+

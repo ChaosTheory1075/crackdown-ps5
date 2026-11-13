@@ -1,0 +1,29 @@
+From 0f7b90f01eed6332ed7ed81a1881d19010b27b4d Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:36 -0500
+Subject: [PATCH 058/122] 0750-winspool-fail-unix-calls-without-a-backend.patch
+
+---
+ dlls/winspool.drv/wspool.h | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/winspool.drv/wspool.h b/dlls/winspool.drv/wspool.h
+index 29a459e..9de545c 100644
+--- a/dlls/winspool.drv/wspool.h
++++ b/dlls/winspool.drv/wspool.h
+@@ -64,7 +64,11 @@ struct get_ppd_params
+     const WCHAR *ppd;
+ };
+ 
+-#define UNIX_CALL( func, params ) WINE_UNIX_CALL( unix_ ## func, params )
++/* The Windows module remains usable without its optional Unix printer
++ * backend. Return an ordinary failure instead of dispatching through a
++ * zero Unix-call handle, so the existing printer/PPD fallbacks can run. */
++#define UNIX_CALL( func, params ) \
++    (__wine_unixlib_handle ? WINE_UNIX_CALL( unix_ ## func, params ) : (NTSTATUS)STATUS_DLL_NOT_FOUND)
+ 
+ enum cups_funcs
+ {
+-- 
+2.43.0
+

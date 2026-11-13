@@ -1,0 +1,185 @@
+From f15fe5edbf86fc9e77294d540b30545daca2a181 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:36 -0500
+Subject: [PATCH 065/122] 0870-server-ps5-release-image-view-fds.patch
+
+---
+ server/fd.c      | 74 +++++++++++++++++++++++++++++++++++++++++++++++-
+ server/file.h    |  3 ++
+ server/mapping.c | 43 ++++++++++++++++++++++++++--
+ 3 files changed, 117 insertions(+), 3 deletions(-)
+
+diff --git a/server/fd.c b/server/fd.c
+index e7edb23..966e95c 100644
+--- a/server/fd.c
++++ b/server/fd.c
+@@ -1909,6 +1909,78 @@ failed:
+     return NULL;
+ }
+ 
++/* Opt-in resource cleanup; read the prefix setting once, without retaining a file. */
++int ps5_image_view_fd_release_enabled(void)
++{
++#ifdef __PROSPERO__
++    static int enabled = -1;
++    const char *value;
++    char buffer[3];
++    int file, result = 0, saved_errno = errno;
++    size_t count = 0;
++    ssize_t size = -1;
++
++    if (enabled != -1) return enabled;
++    if ((value = getenv( "WINE_PS5_IMAGE_VIEW_FD_RELEASE" )))
++        result = !strcmp( value, "1" );
++    else if (config_dir_fd != -1 &&
++             (file = openat( config_dir_fd, "pw_image_view_fd_release", O_RDONLY )) != -1)
++    {
++        while (count < sizeof(buffer) &&
++               (size = read( file, buffer + count, sizeof(buffer) - count )) > 0)
++            count += size;
++        close( file );
++        result = size == 0 && (count == 1 || (count == 2 && buffer[1] == '\n')) &&
++                 buffer[0] == '1';
++    }
++    enabled = result;
++    fprintf( stderr, "wine-ps5: image-view fd release: %s\n", enabled ? "on" : "off" );
++    errno = saved_errno;
++    return enabled;
++#else
++    return 0;
++#endif
++}
++
++/* The caller owns one mapping reference; every other reference must be a
++ * completed, unshared, non-debugged image view. Keep the inode object in its
++ * sharing list and retain names/map-address metadata through view destruction. */
++int ps5_release_image_view_fd( struct fd *fd, unsigned int view_refs )
++{
++    int unix_fd;
++
++    if (!ps5_image_view_fd_release_enabled() || !view_refs ||
++        fd->obj.refcount <= 1 || view_refs != fd->obj.refcount - 1 ||
++        fd->unix_fd == -1 || fd->access != (FILE_MAPPING_ACCESS | FILE_MAPPING_IMAGE) ||
++        fd->user || !fd->inode || !fd->closed ||
++        fd->closed->unix_fd != fd->unix_fd || fd->closed->disp_flags ||
++        (fd->options & FILE_DELETE_ON_CLOSE) || !list_empty( &fd->locks ) ||
++        !list_empty( &fd->inode->locks ) || !list_empty( &fd->inode->closed ) ||
++        async_queued( &fd->read_q ) || async_queued( &fd->write_q ) ||
++        async_queued( &fd->wait_q ) || fd->completion)
++        return 0;
++
++    if (fd->poll_index != -1)
++    {
++        if (pollfd[fd->poll_index].fd != -1 || pollfd[fd->poll_index].events) return 0;
++        remove_poll_user( fd, fd->poll_index );
++        fd->poll_index = -1;
++    }
++    unix_fd = fd->unix_fd;
++    fd->unix_fd = fd->closed->unix_fd = -1;
++    fd->no_fd_status = STATUS_FILE_CLOSED;
++    fd->fs_locks = 0;
++    close( unix_fd );
++    fprintf( stderr, "wine-ps5: released image-view fd %d (views %u)\n", unix_fd, view_refs );
++    return 1;
++}
++
++int ps5_is_image_view_fd_released( struct fd *fd )
++{
++    return fd->unix_fd == -1 && fd->no_fd_status == STATUS_FILE_CLOSED &&
++           fd->access == (FILE_MAPPING_ACCESS | FILE_MAPPING_IMAGE);
++}
++
+ /* find an existing fd object that can be reused for a mapping */
+ struct fd *get_fd_object_for_mapping( struct fd *fd, unsigned int access, unsigned int sharing )
+ {
+@@ -1917,7 +1989,7 @@ struct fd *get_fd_object_for_mapping( struct fd *fd, unsigned int access, unsign
+     if (!fd->inode) return NULL;
+ 
+     LIST_FOR_EACH_ENTRY( fd_ptr, &fd->inode->open, struct fd, inode_entry )
+-        if (fd_ptr->access == access && fd_ptr->sharing == sharing)
++        if (fd_ptr->unix_fd != -1 && fd_ptr->access == access && fd_ptr->sharing == sharing)
+             return (struct fd *)grab_object( fd_ptr );
+ 
+     return NULL;
+diff --git a/server/file.h b/server/file.h
+index 61f570f..50fbbf2 100644
+--- a/server/file.h
++++ b/server/file.h
+@@ -91,6 +91,9 @@ extern struct fd *create_anonymous_fd( const struct fd_ops *fd_user_ops,
+ extern struct fd *dup_fd_object( struct fd *orig, unsigned int access, unsigned int sharing,
+                                  unsigned int options );
+ extern struct fd *get_fd_object_for_mapping( struct fd *fd, unsigned int access, unsigned int sharing );
++extern int ps5_image_view_fd_release_enabled(void);
++extern int ps5_release_image_view_fd( struct fd *fd, unsigned int view_refs );
++extern int ps5_is_image_view_fd_released( struct fd *fd );
+ extern void *get_fd_user( struct fd *fd );
+ extern void set_fd_user( struct fd *fd, const struct fd_ops *ops, struct object *user );
+ extern unsigned int get_fd_options( struct fd *fd );
+diff --git a/server/mapping.c b/server/mapping.c
+index 9294dec..67a6c18 100644
+--- a/server/mapping.c
++++ b/server/mapping.c
+@@ -1204,7 +1204,7 @@ static struct mapping *get_mapping_obj( struct process *process, obj_handle_t ha
+ /* open a new file for the file descriptor backing the view */
+ struct file *get_view_file( const struct memory_view *view, unsigned int access, unsigned int sharing )
+ {
+-    if (!view->fd) return NULL;
++    if (!view->fd || ps5_is_image_view_fd_released( view->fd )) return NULL;
+     return create_file_for_fd_obj( view->fd, access, sharing );
+ }
+ 
+@@ -1278,11 +1278,50 @@ static struct fd *mapping_get_fd( struct object *obj )
+     return (struct fd *)grab_object( mapping->fd );
+ }
+ 
++struct image_view_fd_refs
++{
++    struct fd *fd;
++    unsigned int count;
++    int ineligible;
++};
++
++/* Check current views under the server lock, including late debugger attach. */
++static int count_image_view_fd_refs( struct process *process, void *user )
++{
++    struct image_view_fd_refs *refs = user;
++    struct memory_view *view;
++
++    LIST_FOR_EACH_ENTRY( view, &process->views, struct memory_view, entry )
++    {
++        if (view->fd != refs->fd) continue;
++        if (!(view->flags & SEC_IMAGE) || view->shared || process->debug_obj)
++        {
++            refs->ineligible = 1;
++            return 1;
++        }
++        refs->count++;
++    }
++    return 0;
++}
++
++static void release_mapping_image_view_fd( struct fd *fd, unsigned int flags, struct shared_map *shared )
++{
++    struct image_view_fd_refs refs = { fd, 0, 0 };
++
++    if (!(flags & SEC_IMAGE) || shared || !ps5_image_view_fd_release_enabled()) return;
++    enum_processes( count_image_view_fd_refs, &refs );
++    if (!refs.ineligible) ps5_release_image_view_fd( fd, refs.count );
++}
++
+ static void mapping_destroy( struct object *obj )
+ {
+     struct mapping *mapping = (struct mapping *)obj;
+     assert( obj->ops == &mapping_ops );
+-    if (mapping->fd) release_object( mapping->fd );
++    if (mapping->fd)
++    {
++        release_mapping_image_view_fd( mapping->fd, mapping->flags, mapping->shared );
++        release_object( mapping->fd );
++    }
+     if (mapping->committed) release_object( mapping->committed );
+     if (mapping->shared) release_object( mapping->shared );
+     free( mapping->exp_name );
+-- 
+2.43.0
+

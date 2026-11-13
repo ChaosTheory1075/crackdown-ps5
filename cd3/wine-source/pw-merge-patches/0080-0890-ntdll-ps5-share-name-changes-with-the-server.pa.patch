@@ -1,0 +1,61 @@
+From 4614271981e9b16d4ea7507cfe3723e4dd22af7b Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:37 -0500
+Subject: [PATCH 080/122] 
+ 0890-ntdll-ps5-share-name-changes-with-the-server.patch
+
+---
+ dlls/ntdll/unix/server.c | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index 2f6f9a5..7160b34 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -1837,6 +1837,33 @@ void unregister_inprocess_thread(void)
+ /* the in-process server signals threads through this table on PS5 */
+ static int (*register_server_thread)( long tid, pthread_t thread );
+ 
++#ifdef __PROSPERO__
++/* wine/ps5/pw_wine_cwd.h */
++extern unsigned long *pw_cwd_changes_counter(void);
++extern void pw_cwd_listings_enable( int enable );
++
++/***********************************************************************
++ *           share_name_changes
++ *
++ * The server creates, renames and deletes the files of ntdll's handles,
++ * through its own copy of the working-directory wrappers. Have it count
++ * those changes in ntdll's counter, so that file.c can keep the listings of
++ * directories it searched for a name that was not there. A server module
++ * that cannot share, or WINE_PS5_DIR_LISTINGS=0, leaves every search reading
++ * its directory.
++ */
++static void share_name_changes( void *module )
++{
++    void (*share)( unsigned long *counter ) = dlsym( module, "pw_cwd_share_changes" );
++    const char *env = getenv( "WINE_PS5_DIR_LISTINGS" );
++    int enable = share && !(env && !strcmp( env, "0" ));
++
++    if (share) share( pw_cwd_changes_counter() );
++    pw_cwd_listings_enable( enable );
++    fprintf( stderr, "wine-ps5: directory listings for missed names: %s\n", enable ? "on" : "off" );
++}
++#endif
++
+ /***********************************************************************
+  *           connect_inprocess_server
+  *
+@@ -1874,6 +1901,9 @@ static int connect_inprocess_server(void)
+ 
+     if (!(module = dlopen( module_path, RTLD_NOW )))
+         fatal_error( "cannot load the in-process server %s: %s\n", module_path, dlerror() );
++#ifdef __PROSPERO__
++    share_name_changes( module );  /* before the server starts creating files */
++#endif
+     if (!(connect_server = dlsym( module, "pw_wineserver_connect" )))
+         fatal_error( "%s has no pw_wineserver_connect\n", module_path );
+     register_server_thread = dlsym( module, "pw_wine_thread_register" );
+-- 
+2.43.0
+

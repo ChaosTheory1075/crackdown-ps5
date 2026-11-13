@@ -1,0 +1,27 @@
+From 6691ebe5dfbe58db1da16529840aa291ffb3177f Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:34 -0500
+Subject: [PATCH 034/122] 0580-ntdll-ps5-config-dir-parent-ownership.patch
+
+---
+ dlls/ntdll/unix/server.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index 038f87c..4f4407c 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -1343,8 +1343,10 @@ static int setup_config_dir(void)
+         {
+             while (p > dir + 1 && p[-1] == '/') p--;
+             *p = 0;
++#ifndef __PROSPERO__  /* one user; its file systems do not keep unix owners */
+             if (!stat( dir, &st ) && st.st_uid != getuid())
+                 fatal_error( "'%s' is not owned by you, refusing to create a configuration directory there\n", dir );
++#endif
+         }
+         free( dir );
+         mkdir( config_dir, 0777 );
+-- 
+2.43.0
+

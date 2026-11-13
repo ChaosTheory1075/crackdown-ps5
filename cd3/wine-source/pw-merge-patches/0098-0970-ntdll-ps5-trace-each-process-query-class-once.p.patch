@@ -1,0 +1,49 @@
+From 6ffae1839482d52f6c40d85a7bef729eab5e4074 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:38 -0500
+Subject: [PATCH 098/122] 
+ 0970-ntdll-ps5-trace-each-process-query-class-once.patch
+
+---
+ dlls/ntdll/unix/process.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/dlls/ntdll/unix/process.c b/dlls/ntdll/unix/process.c
+index f469f4b..9d64417 100644
+--- a/dlls/ntdll/unix/process.c
++++ b/dlls/ntdll/unix/process.c
+@@ -1174,12 +1174,31 @@ static BOOL ps5_is_own_process( HANDLE handle )
+ extern NTSTATUS ps5_qpc_anchor( void *args );
+ #include "../pw_qpc_clock.h"
+ 
++#ifdef __PROSPERO__
++/* Games poll some classes every frame: Call of Juarez Gunslinger asks for
++ * ProcessAffinityMask 60 times a second, and with the title's +process
++ * default that one line filled its whole log, so the +loaddll lines that
++ * place a crash address were gone. Trace each class the first time only. */
++static BOOL first_query( PROCESSINFOCLASS class )
++{
++    static unsigned int queried[4];
++    unsigned int bit;
++
++    if ((unsigned int)class >= 32 * ARRAY_SIZE(queried)) return TRUE;
++    bit = 1u << (class % 32);
++    return !(__atomic_fetch_or( &queried[class / 32], bit, __ATOMIC_RELAXED ) & bit);
++}
++#endif
++
+ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class, void *info,
+                                            ULONG size, ULONG *ret_len )
+ {
+     unsigned int ret = STATUS_SUCCESS;
+     ULONG len = 0;
+ 
++#ifdef __PROSPERO__
++    if (TRACE_ON(process) && first_query( class ))
++#endif
+     TRACE( "(%p,0x%08x,%p,0x%08x,%p)\n", handle, class, info, size, ret_len );
+ 
+     switch (class)
+-- 
+2.43.0
+

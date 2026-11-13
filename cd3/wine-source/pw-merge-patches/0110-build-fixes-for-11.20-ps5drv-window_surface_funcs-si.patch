@@ -1,0 +1,48 @@
+From 7b92f2b2b4cb917cb02bee277b60d39aa73a6d1e Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:31:14 -0500
+Subject: [PATCH 110/122] build fixes for 11.20: ps5drv window_surface_funcs
+ size, environ decl
+
+---
+ dlls/ntdll/unix/process.c | 2 ++
+ dlls/win32u/ps5drv.c      | 3 ++-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/ntdll/unix/process.c b/dlls/ntdll/unix/process.c
+index 664e749..688a1c2 100644
+--- a/dlls/ntdll/unix/process.c
++++ b/dlls/ntdll/unix/process.c
+@@ -70,6 +70,8 @@
+ #include "wine/server.h"
+ #include "wine/debug.h"
+ 
++extern char **environ;  /* [cd3] not declared by the PS5's (FreeBSD) headers */
++
+ WINE_DEFAULT_DEBUG_CHANNEL(process);
+ 
+ 
+diff --git a/dlls/win32u/ps5drv.c b/dlls/win32u/ps5drv.c
+index 33a8191..3189a57 100644
+--- a/dlls/win32u/ps5drv.c
++++ b/dlls/win32u/ps5drv.c
+@@ -302,6 +302,7 @@ static void ps5_surface_destroy( struct window_surface *surface )
+ 
+ static const struct window_surface_funcs ps5_surface_funcs =
+ {
++    sizeof(struct window_surface),  /* [cd3] Wine 11.20: the implementation size comes first */
+     ps5_surface_set_clip,
+     ps5_surface_flush,
+     ps5_surface_destroy
+@@ -326,7 +327,7 @@ static BOOL ps5_CreateWindowSurface( HWND hwnd, BOOL layered, const RECT *surfac
+     info->bmiHeader.biSizeImage   = get_dib_image_size( info );
+     info->bmiHeader.biCompression = BI_RGB;
+ 
+-    *surface = window_surface_create( sizeof(**surface), &ps5_surface_funcs, hwnd, surface_rect, info, 0 );
++    *surface = window_surface_create( &ps5_surface_funcs, hwnd, surface_rect, info, 0 );  /* [cd3] 11.20 */
+     if (previous) window_surface_release( previous );
+     return TRUE;
+ }
+-- 
+2.43.0
+

@@ -1,0 +1,51 @@
+From a06db3c994bcea9064aaaca44c0f8d3416265b6f Mon Sep 17 00:00:00 2001
+From: ChaosTheory1075 <252520959+ChaosTheory1075@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 16:41:47 -0500
+Subject: [PATCH 112/122] ntdll: prospero-win address space probe on the PS5
+ (pages_vprot came back NULL)
+
+---
+ dlls/ntdll/unix/virtual.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index b621fc2..70d91a9 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -2878,6 +2878,25 @@ static void *get_host_addr_space_limit(void)
+ #ifdef __APPLE__
+     /* See MACH_VM_MAX_ADDRESS_RAW in xnu osfmk/mach/arm/vm_param.h */
+     return (void *)0x7ffffe000000;
++#elif defined(__PROSPERO__)
++    /* [cd3] prospero-win's probe: anon_mmap_tryfixed answers EEXIST on the PS5 for a range the
++     * kernel can't grant too, so 11.20's probe stopped at 1 << 63, took the address space for
++     * 2^64 bytes, and pages_vprot's 32 GB calloc came back NULL (crash in create_view). A plain
++     * hint, and the address the kernel actually gave, as prospero-win's Wine does. */
++    UINT_PTR addr = (UINT_PTR)1 << 63;
++
++    while (addr >> 32)
++    {
++        void *ret = mmap( (void *)addr, host_page_size, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0 );
++        if (ret != MAP_FAILED)
++        {
++            munmap( ret, host_page_size );
++            if (ret >= (void *)addr) break;
++        }
++        else if (errno == EEXIST) break;
++        addr >>= 1;
++    }
++    return (void *)((addr << 1) - (granularity_mask + 1));
+ #elif defined _WIN64
+     UINT_PTR addr = (UINT_PTR)1 << 63;
+ 
+@@ -3901,6 +3920,7 @@ void virtual_init(void)
+ #ifdef _WIN64
+     pages_vprot_size = ((size_t)host_addr_space_limit >> page_shift >> pages_vprot_shift) + 1;
+     pages_vprot = calloc( pages_vprot_size, sizeof(*pages_vprot) );
++    assert( pages_vprot );  /* [cd3] */
+ #else
+     pages_vprot = anon_mmap_alloc( 1U << (32 - page_shift), PROT_READ | PROT_WRITE );
+ #endif
+-- 
+2.43.0
+

@@ -1,0 +1,36 @@
+From a621b58817910b013384ff25a83800b55ad0a462 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:34 -0500
+Subject: [PATCH 025/122] 
+ 0501-ntdll-ps5-signal-fp-state-at-its-measured-offset.patch
+
+---
+ dlls/ntdll/unix/signal_x86_64.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index 58bd58b..637e950 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -250,8 +250,18 @@ __ASM_GLOBAL_FUNC( modify_ldt,
+ #define RSP_sig(context)     (UCONTEXT_MC(context).mc_rsp)
+ #define TRAP_sig(context)    (UCONTEXT_MC(context).mc_trapno)
+ #define ERROR_sig(context)   (UCONTEXT_MC(context).mc_err)
++#ifdef __PROSPERO__
++/* Measured on PS5 FW 12.02 with a payload that faults with known FP state:
++ * the kernel keeps 32 more bytes in mcontext_t than the SDK header declares,
++ * so its FXSAVE image is at ucontext offset 320, not mc_fpstate (288), and
++ * sigreturn restores MXCSR and XMM from there. The XSAVE header follows at
++ * 832 and the YMM upper halves at 896, in the standard (uncompacted) form. */
++#define FPU_sig(context)     ((void *)((char *)(context) + 320))
++#define XState_sig(fpu)      ((XSAVE_AREA_HEADER *)((char *)(fpu) + sizeof(XSAVE_FORMAT)))
++#else
+ #define FPU_sig(context)     ((void *)(UCONTEXT_MC(context).mc_fpstate))
+ #define XState_sig(context)  NULL
++#endif
+ 
+ #elif defined(__NetBSD__)
+ 
+-- 
+2.43.0
+

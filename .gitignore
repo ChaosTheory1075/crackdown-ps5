@@ -1,4 +1,4 @@
-# Game code and data never go in this repo.
+# Game code and data never go in this repo unencrypted.
 *.xex
 *.xexp
 *.iso

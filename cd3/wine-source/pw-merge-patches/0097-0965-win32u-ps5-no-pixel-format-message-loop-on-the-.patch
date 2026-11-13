@@ -1,0 +1,29 @@
+From 25762b360b7a7561270b295533d242d3f373450a Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:38 -0500
+Subject: [PATCH 097/122] 
+ 0965-win32u-ps5-no-pixel-format-message-loop-on-the-desktop.patch
+
+---
+ dlls/win32u/window.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+index 738df48..3f16c70 100644
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -1758,6 +1758,11 @@ BOOL set_window_pixel_format( HWND hwnd, int format, BOOL internal )
+     if (!win || win == WND_DESKTOP || win == WND_OTHER_PROCESS)
+     {
+         WARN( "setting format %d on win %p semi-stub!\n", format, hwnd );
++#ifdef WINE_PS5_USER_DRIVER
++        /* no explorer owns the server-created desktop: a message posted to
++         * it comes back to this process, lands here and is posted again */
++        if (win == WND_DESKTOP) return FALSE;
++#endif
+         NtUserPostMessage( hwnd, WM_WINE_SETPIXELFORMAT, format, internal );
+         return FALSE;
+     }
+-- 
+2.43.0
+

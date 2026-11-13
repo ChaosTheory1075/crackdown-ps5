@@ -1,0 +1,66 @@
+From 3e158d97c1bda5f38c227439fa5b909470510f9e Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:35 -0500
+Subject: [PATCH 048/122] 0640-win32u-ps5-flush-period.patch
+
+---
+ dlls/win32u/dibdrv/dc.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/dlls/win32u/dibdrv/dc.c b/dlls/win32u/dibdrv/dc.c
+index 8a72d97..1774ab6 100644
+--- a/dlls/win32u/dibdrv/dc.c
++++ b/dlls/win32u/dibdrv/dc.c
+@@ -496,7 +496,17 @@ const struct gdi_dc_funcs dib_driver =
+  * can paint to the same window.
+  */
+ 
++#ifdef WINE_PS5_USER_DRIVER
++/* The PS5 shows a window's drawing only when its surface is flushed, and a
++ * thread that draws without going idle is flushed only here. Counting from
++ * the first drawing after a flush, a DirectShow renderer drawing a frame
++ * every 41 ms had every other frame flushed: a 24 fps movie showed at 14.
++ * The period counts from the last forced flush instead, and is one 60 Hz
++ * frame: each frame drawn later than that is shown at once. */
++#define FLUSH_PERIOD 16
++#else
+ #define FLUSH_PERIOD 50  /* time in ms since drawing started for forcing a surface flush */
++#endif
+ 
+ struct windrv_physdev
+ {
+@@ -521,8 +531,12 @@ static inline void lock_surface( struct windrv_physdev *dev )
+     if (!dev->lock_count++)
+     {
+         window_surface_lock( surface );
++#ifdef WINE_PS5_USER_DRIVER
++        if (!surface->draw_start_ticks) surface->draw_start_ticks = NtGetTickCount();
++#else
+         if (IsRectEmpty( dev->dibdrv->bounds ) || !surface->draw_start_ticks)
+             surface->draw_start_ticks = NtGetTickCount();
++#endif
+     }
+ }
+ 
+@@ -532,9 +546,18 @@ static inline void unlock_surface( struct windrv_physdev *dev )
+ 
+     if (!--dev->lock_count)
+     {
++#ifdef WINE_PS5_USER_DRIVER
++        DWORD now = NtGetTickCount();
++        BOOL flush = now - surface->draw_start_ticks >= FLUSH_PERIOD;
++
++        if (flush) surface->draw_start_ticks = now;
++        window_surface_unlock( surface );
++        if (flush) window_surface_flush( dev->surface );
++#else
+         DWORD ticks = NtGetTickCount() - surface->draw_start_ticks;
+         window_surface_unlock( surface );
+         if (ticks > FLUSH_PERIOD) window_surface_flush( dev->surface );
++#endif
+     }
+ }
+ 
+-- 
+2.43.0
+

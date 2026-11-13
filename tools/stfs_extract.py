@@ -4,7 +4,8 @@
     stfs_extract.py <package> <out dir>          extract every file
     stfs_extract.py <package> --list             list files and the header
 
-Used for Max Payne 3's title update (default.xexp) and its DLC packages.
+Used by install_to_ps5.ps1 for Crackdown's title update (default.xexp) and DLC packages
+(written for Max Payne 3's, the same STFS format).
 Handles read-only (LIVE/PIRS) packages, consecutive and chained files.
 """
 import os

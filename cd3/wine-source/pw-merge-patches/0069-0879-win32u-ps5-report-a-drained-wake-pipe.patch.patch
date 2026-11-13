@@ -1,0 +1,53 @@
+From 28ebf30935fc7bc235fc1becd22f9d79e5249109 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:36 -0500
+Subject: [PATCH 069/122] 0879-win32u-ps5-report-a-drained-wake-pipe.patch
+
+---
+ dlls/win32u/ps5drv.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/win32u/ps5drv.c b/dlls/win32u/ps5drv.c
+index 8981751..c75d00e 100644
+--- a/dlls/win32u/ps5drv.c
++++ b/dlls/win32u/ps5drv.c
+@@ -551,6 +551,7 @@ static BOOL ps5_ProcessEvents( DWORD mask )
+     struct ps5_input event;
+     HWND hwnd = NtUserGetForegroundWindow();
+     UINT processed = 0;
++    BOOL polled = FALSE;
+ 
+     if (!next_input) return FALSE;
+     if (!hwnd && (hwnd = last_shown_window()))
+@@ -564,7 +565,11 @@ static BOOL ps5_ProcessEvents( DWORD mask )
+         /* drain the wake pipe first: input posted from now on wakes again */
+         char buffer[64];
+         int fd = input_fd();
+-        if (fd != -1) while (read( fd, buffer, sizeof(buffer) ) > 0) {}
++        if (fd != -1)
++        {
++            while (read( fd, buffer, sizeof(buffer) ) > 0) {}
++            polled = TRUE;
++        }
+     }
+     while (processed < PS5_INPUT_BATCH && next_input( &event ))
+     {
+@@ -590,7 +595,14 @@ static BOOL ps5_ProcessEvents( DWORD mask )
+             break;
+         }
+     }
+-    return processed != 0;
++    /* The wake pipe is every GUI thread's queue fd, so a byte sets QS_DRIVER
++     * on all their queues while one of them drains it and takes the events;
++     * a byte can also come after its event was taken here. Either way this
++     * thread finds nothing, and unless it reports the fd as handled, win32u
++     * neither clears its QS_DRIVER nor re-arms the fd: a zero-timeout
++     * message wait (DirectInput's GetDeviceState) then spins until the next
++     * input. A byte still in the pipe makes the re-armed fd fire again. */
++    return processed != 0 || polled;
+ }
+ 
+ /***********************************************************************
+-- 
+2.43.0
+

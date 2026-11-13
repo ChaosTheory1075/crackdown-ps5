@@ -10,6 +10,10 @@
 //  - The DLC packages: each into <app>/dlc/<its package name>/.
 //  - Saves: Xbox 360 save packages, into <app>/saves the way the runtime keeps
 //    them; and the app's own backups (install/backups/...), restored.
+//  - Crackdown 2 (4D5308BC, Source::game 2), told apart by its default.xex's or package's title id
+//    (Saints Row: ReInstated's installer): its disc into <app>/game2, Title Update 5 into game2/
+//    (and game2/update/), any of its DLC packages into <app>/dlc2/<package name>/, its saves beside
+//    Crackdown 1's in saves/.
 //
 // Everything is found from what it is (an image's file system, a package's
 // header), never from its name. An install is written next to its place and
@@ -40,7 +44,7 @@ const char* DlcName(int dlc);
 enum class Kind {
   kGameImage,    // a disc image
   kGameFolder,   // a folder with default.xex
-  kUpdate,       // Title Update 6
+  kUpdate,       // the title update the program is built from: Title Update 6 (Crackdown 2: Title Update 5)
   kOtherUpdate,  // another title update (TU5, ...): not installable
   kDlc,
   kSave,         // an Xbox 360 save package
@@ -53,14 +57,29 @@ struct Source {
   Kind kind = Kind::kOther;
   fs::path path;
   std::string label;  // for the menu
-  int dlc = -1;       // (kDlc) which
+  int dlc = -1;       // (kDlc, Crackdown 1) which
+  int game = 1;       // whose: 1 Crackdown, 2 Crackdown 2 (0: a disc image that's neither)
+};
+
+// One of the app's saves, for the SAVES page's list.
+struct SaveInfo {
+  std::string name;      // the save's folder
+  int64_t modified = 0;  // (seconds since 1970)
+  int game = 1;          // whose (1, 2)
 };
 
 struct Installed {
   bool game = false, update = false;
   bool dlc[kDlcCount] = {};
   int saves = 0;
+  std::vector<SaveInfo> save_list;  // (both games', the newest first)
+  // Crackdown 2: its disc, Title Update 5, how many DLC packs, its saves
+  bool game2 = false, update2 = false;
+  int dlc2 = 0, saves2 = 0;
 };
+
+// The label of an Xbox 360 avatar item's package (Kind::kOther): the menu counts them in one line.
+inline constexpr const char* kAvatarItemLabel = "avatar item";
 
 fs::path Folder(const fs::path& app);  // <app>/install (made if missing)
 // Where the install folder really is, for the screen ("/mnt/usb0/homebrew/PPSA53070/install"):
@@ -71,7 +90,7 @@ std::vector<Source> Scan(const fs::path& app);
 // The ones installed without being asked, as the menu opens: the game, TU6, the DLC.
 bool Automatic(Kind kind);
 
-enum class Remove { kGame, kUpdate, kDlc0, kDlc1 };
+enum class Remove { kGame, kUpdate, kDlc0, kDlc1, kGame2, kUpdate2, kDlc2 };  // (kDlc2: all of Crackdown 2's)
 
 // One job at a time, on its own thread.
 class Job {
@@ -88,6 +107,7 @@ class Job {
 
   bool Install(const fs::path& app, const Source& source);
   bool Uninstall(const fs::path& app, Remove what);
+  bool InstallDlc2(const fs::path& app, const Source& source);  // (Install's, for Crackdown 2's DLC)
   bool Backup(const fs::path& app);
 
   // The files installed from this session (disc images, packages), still in the install folder:

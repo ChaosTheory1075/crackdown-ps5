@@ -1,0 +1,66 @@
+From e18efc81f62226decb3142ec3ce3d2f6c3f2bd94 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:36 -0500
+Subject: [PATCH 057/122] 0740-win32u-ps5-vulkan-hardware-cursor.patch
+
+---
+ dlls/win32u/ps5drv.c | 24 ++++++++++++++++++++++++
+ dlls/win32u/vulkan.c |  7 +++++++
+ 2 files changed, 31 insertions(+)
+
+diff --git a/dlls/win32u/ps5drv.c b/dlls/win32u/ps5drv.c
+index 73f0d7d..8981751 100644
+--- a/dlls/win32u/ps5drv.c
++++ b/dlls/win32u/ps5drv.c
+@@ -730,6 +730,30 @@ static void ps5_SetCursor( HWND hwnd, HCURSOR handle )
+     TRACE( "cursor %p: %ux%u\n", handle, width, height );
+ }
+ 
++#ifdef SONAME_LIBVULKAN
++/* Vulkan frames reach the screen through the GPU driver's own video output
++ * (patch 0460), which this driver does not compose, so after each present
++ * libvulkan.prx shows the cursor with VideoOut's hardware cursor
++ * (pw_videoout_cursor): the image, NULL when hidden, at its place on the
++ * desktop, which the output shows whole. */
++void ps5drv_vulkan_cursor( void *vulkan_handle )
++{
++    static int (*show)( const UINT32 *, UINT, UINT, INT, INT, UINT, UINT );
++    static BOOL looked;
++
++    if (!looked)
++    {
++        looked = TRUE;
++        show = dlsym( vulkan_handle, "pw_videoout_cursor" );
++    }
++    if (!show) return;
++    pthread_mutex_lock( &screen_lock );
++    show( cursor_width && cursor_height ? cursor_image : NULL, cursor_width, cursor_height,
++          cursor.x - cursor_hotspot.x, cursor.y - cursor_hotspot.y, screen_width, screen_height );
++    pthread_mutex_unlock( &screen_lock );
++}
++#endif
++
+ static BOOL ps5_GetCursorPos( POINT *pos )
+ {
+     /* the server's position is the pointer's: every move goes through it */
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+index 364dba5..c31dfc0 100644
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -2079,6 +2079,13 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+ 
+     if (swapchains != swapchains_buffer) free( swapchains );
+ 
++#ifdef WINE_PS5_USER_DRIVER
++    {
++        extern void ps5drv_vulkan_cursor( void *vulkan_handle );
++        ps5drv_vulkan_cursor( vulkan_handle );
++    }
++#endif
++
+     if (TRACE_ON( fps ))
+     {
+         static unsigned long frames, frames_total;
+-- 
+2.43.0
+

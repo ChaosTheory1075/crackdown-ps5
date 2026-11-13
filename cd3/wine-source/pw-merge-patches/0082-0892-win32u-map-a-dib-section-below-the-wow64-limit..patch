@@ -1,0 +1,28 @@
+From 8ca853d4d449cf1c7effa1fd0e90cae229e1d3a3 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:37 -0500
+Subject: [PATCH 082/122] 
+ 0892-win32u-map-a-dib-section-below-the-wow64-limit.patch
+
+---
+ dlls/win32u/dib.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/win32u/dib.c b/dlls/win32u/dib.c
+index 6151e83..b58b03e 100644
+--- a/dlls/win32u/dib.c
++++ b/dlls/win32u/dib.c
+@@ -1544,7 +1544,9 @@ HBITMAP WINAPI NtGdiCreateDIBSection( HDC hdc, HANDLE section, DWORD offset, con
+ 
+         map_offset.QuadPart = offset - (offset % system_info.AllocationGranularity);
+         map_size = bmp->dib.dsBmih.biSizeImage + (offset - map_offset.QuadPart);
+-        if (NtMapViewOfSection( section, GetCurrentProcess(), &mapBits, 0, 0, &map_offset,
++        /* The bits are handed to the caller: in a WoW64 process they must
++         * be below its limit, as the allocation below asks. */
++        if (NtMapViewOfSection( section, GetCurrentProcess(), &mapBits, zero_bits, 0, &map_offset,
+                                 &map_size, ViewShare, 0, PAGE_READWRITE ))
+             goto error;
+         bmp->dib.dsBm.bmBits = (char *)mapBits + (offset - map_offset.QuadPart);
+-- 
+2.43.0
+

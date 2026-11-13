@@ -1,0 +1,12 @@
+# Crackdown 2 (4D5308BC), Title Update 5 (0.0.5.1): the disc's default.xex with TU5's Default.xexp beside
+# it (the loader applies the patch, so the code generated is the updated game's). cd2.bin, the program the
+# menu starts for Crackdown 2. Generated with REX_DCBZ128=1 (dcbz clears 128 bytes: ci/fw_perf_fixes.py).
+
+[project]
+name = "crackdown2"
+sdk_version = "0.9.0"
+
+[entrypoint]
+file_path = "assets/default.xex"
+out_directory_path = "generated"
+includes = ["cd2_config.toml"]

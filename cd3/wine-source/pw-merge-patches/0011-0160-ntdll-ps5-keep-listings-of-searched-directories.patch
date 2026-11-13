@@ -1,0 +1,179 @@
+From 0f63b788e6dc85786fc7345fd8be72c2c1aad492 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:33 -0500
+Subject: [PATCH 011/122] 
+ 0160-ntdll-ps5-keep-listings-of-searched-directories.patch
+
+---
+ dlls/ntdll/unix/file.c | 95 ++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 87 insertions(+), 8 deletions(-)
+
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 3155aa6..e6ab872 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -956,7 +956,11 @@ done:
+  */
+ static BOOLEAN get_dir_case_sensitivity_stat( int root_fd, const char *dir )
+ {
+-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
++#ifdef __PROSPERO__
++    /* A title has no fstatfs (pw_wine_compat answers ENOSYS), so the FreeBSD
++     * method below always answered TRUE, after an openat and a close. */
++    return TRUE;
++#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+     struct statfs stfs;
+     int fd;
+ 
+@@ -2721,22 +2725,76 @@ NTSTATUS WINAPI NtQueryDirectoryFile( HANDLE handle, HANDLE event, PIO_APC_ROUTI
+ }
+ 
+ 
++#ifdef __PROSPERO__
++/* wine/ps5/pw_wine_cwd.h: a directory's names, kept in memory while no name
++ * in it can have changed */
++extern int pw_cwd_scan_directory( int dirfd, const char *path, int (*visit)( const char *name, void *context ),
++                                  void *context, unsigned int *flags );
++#define PW_CWD_NO_REPARSE_NAMES 1
++
++struct dir_match
++{
++    const WCHAR *name;
++    int length;
++    BOOLEAN is_name_8_dot_3;
++    char found[MAX_DIR_ENTRY_LEN + 1];
++};
++
++/***********************************************************************
++ *           match_dir_entry
++ *
++ * Compare a directory entry with the name find_file_in_dir looks for, as its
++ * readdir loop does elsewhere; 1 when it matches.
++ */
++static int match_dir_entry( const char *entry, void *context )
++{
++    struct dir_match *match = context;
++    WCHAR buffer[MAX_DIR_ENTRY_LEN];
++    size_t len = strlen( entry );
++    int ret;
++
++    if (len > MAX_DIR_ENTRY_LEN) return 0;
++    ret = ntdll_umbstowcs( entry, len, buffer, MAX_DIR_ENTRY_LEN );
++    if (ret == match->length && !wcsnicmp( buffer, match->name, ret )) goto found;
++    if (match->is_name_8_dot_3 && !is_legal_8dot3_name( buffer, ret ))
++    {
++        WCHAR short_nameW[12];
++        ret = hash_short_file_name( buffer, ret, short_nameW );
++        if (ret == match->length && !wcsnicmp( short_nameW, match->name, match->length )) goto found;
++    }
++    return 0;
++
++found:
++    memcpy( match->found, entry, len + 1 );
++    return 1;
++}
++#endif
++
++
+ /***********************************************************************
+  *           find_file_in_dir
+  *
+  * Find a file in a directory the hard way, by doing a case-insensitive search.
+  * The file found is appended to unix_name at pos.
+  * There must be at least MAX_DIR_ENTRY_LEN+2 chars available at pos.
++ * no_reparse, when given, is set when the whole directory was searched and no
++ * name in it ends in '?', so it holds no reparse point to look for.
+  */
+ static NTSTATUS find_file_in_dir( int root_fd, char *unix_name, int pos, const WCHAR *name, int length,
+-                                  BOOLEAN check_case )
++                                  BOOLEAN check_case, BOOLEAN *no_reparse )
+ {
++#ifdef __PROSPERO__
++    struct dir_match match;
++    unsigned int flags;
++#else
+     WCHAR buffer[MAX_DIR_ENTRY_LEN];
+-    BOOLEAN is_name_8_dot_3;
+     DIR *dir;
+     struct dirent *de;
++    int fd;
++#endif
++    BOOLEAN is_name_8_dot_3;
+     struct stat st;
+-    int fd, ret;
++    int ret;
+ 
+     /* try a shortcut for this directory */
+ 
+@@ -2811,6 +2869,24 @@ static NTSTATUS find_file_in_dir( int root_fd, char *unix_name, int pos, const W
+     }
+ #endif /* VFAT_IOCTL_READDIR_BOTH */
+ 
++#ifdef __PROSPERO__
++    /* Each system call costs microseconds on the console, and the loaders that
++     * look for a file in an override folder before every open miss there on
++     * almost every lookup: the names come from memory while the directory
++     * cannot have changed (wine/ps5/pw_wine_cwd.h). */
++    match.name = name;
++    match.length = length;
++    match.is_name_8_dot_3 = is_name_8_dot_3;
++    ret = pw_cwd_scan_directory( root_fd, unix_name, match_dir_entry, &match, &flags );
++    if (ret < 0) return errno_to_status( errno );
++    if (ret > 0)
++    {
++        unix_name[pos - 1] = '/';
++        strcpy( unix_name + pos, match.found );
++        return STATUS_SUCCESS;
++    }
++    if (no_reparse && (flags & PW_CWD_NO_REPARSE_NAMES)) *no_reparse = TRUE;
++#else
+     if ((fd = openat( root_fd, unix_name, O_RDONLY )) == -1) return errno_to_status( errno );
+     if (!(dir = fdopendir( fd )))
+     {
+@@ -2844,6 +2920,7 @@ static NTSTATUS find_file_in_dir( int root_fd, char *unix_name, int pos, const W
+         }
+     }
+     closedir( dir );
++#endif
+ 
+ not_found:
+     unix_name[pos - 1] = 0;
+@@ -3365,6 +3442,7 @@ static NTSTATUS lookup_unix_name( int root_fd, OBJECT_ATTRIBUTES *attr, UNICODE_
+     {
+         const WCHAR *end, *next;
+         WCHAR *reparse_name;
++        BOOLEAN no_reparse = FALSE;
+ 
+         end = name;
+         while (end < name + name_len && *end != '\\') end++;
+@@ -3382,10 +3460,11 @@ static NTSTATUS lookup_unix_name( int root_fd, OBJECT_ATTRIBUTES *attr, UNICODE_
+             unix_name = *buffer = new_name;
+         }
+ 
+-        status = find_file_in_dir( root_fd, unix_name, pos, name, end - name, is_unix );
++        status = find_file_in_dir( root_fd, unix_name, pos, name, end - name, is_unix, &no_reparse );
+ 
+         /* try to resolve it as a reparse point */
+-        if (status == STATUS_OBJECT_NAME_NOT_FOUND && (reparse_name = malloc( (end - name + 1) * sizeof(WCHAR) )))
++        if (status == STATUS_OBJECT_NAME_NOT_FOUND && !no_reparse &&
++            (reparse_name = malloc( (end - name + 1) * sizeof(WCHAR) )))
+         {
+             int reparse_fd;
+ 
+@@ -3394,11 +3473,11 @@ static NTSTATUS lookup_unix_name( int root_fd, OBJECT_ATTRIBUTES *attr, UNICODE_
+ 
+             if (!name_len && open_reparse)
+             {
+-                status = find_file_in_dir( root_fd, unix_name, pos, reparse_name, end - name + 1, is_unix );
++                status = find_file_in_dir( root_fd, unix_name, pos, reparse_name, end - name + 1, is_unix, NULL );
+             }
+             else
+             {
+-                if (!find_file_in_dir( root_fd, unix_name, pos, reparse_name, end - name + 1, is_unix )
++                if (!find_file_in_dir( root_fd, unix_name, pos, reparse_name, end - name + 1, is_unix, NULL )
+                     && (reparse_fd = openat( root_fd, unix_name, O_RDONLY )) >= 0)
+                 {
+                     status = resolve_reparse_point( reparse_fd, root_fd, attr, nt_name, nt_pos, next - name, buffer,
+-- 
+2.43.0
+

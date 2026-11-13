@@ -1,0 +1,81 @@
+From 9f0a6e12a8344e39bda956a1c007aa9a874f6e3d Mon Sep 17 00:00:00 2001
+From: local <local@localhost>
+Date: Wed, 11 Nov 2026 10:40:40 -0500
+Subject: [PATCH 117/122] PS5: load winevulkan and xinput1_3 right after
+ win32u, before a title fills the top of the address space (load_prx EINVAL)
+
+---
+ dlls/ntdll/unix/virtual.c | 42 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 96e8bd2..64f6ddd 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -1088,12 +1088,39 @@ static NTSTATUS get_unixlib_funcs( void *so_handle, BOOL wow, const void **funcs
+ /***********************************************************************
+  *           load_builtin_unixlib
+  */
++#ifdef __PROSPERO__
++/* PS5: a title that fills the top of the address space (Crackdown 3: UE4's pools) leaves the
++ * kernel no room for a PRX loaded later, and load_prx fails with EINVAL (0x16): winevulkan and
++ * xinput1_3 then never load and DXVK finds no Vulkan. Load them right after win32u's unix lib,
++ * while there is room; the later dlopen of the same path finds them already loaded. */
++static void ps5_preload_unixlibs( const char *dir )
++{
++    static const char * const names[] = { "winevulkan.so", "xinput1_3.so" };
++    static int done;
++    char path[1024];
++    unsigned int i;
++
++    if (done) return;
++    done = 1;
++    for (i = 0; i < ARRAY_SIZE(names); i++)
++    {
++        void *handle;
++        snprintf( path, sizeof(path), "%s/%s", dir, names[i] );
++        handle = dlopen( path, RTLD_NOW );
++        ERR( "PS5PRELOAD %s: %s\n", path, handle ? "loaded" : dlerror() );
++    }
++}
++#endif
++
+ static NTSTATUS load_builtin_unixlib( void *module, BOOL wow, const void **funcs )
+ {
+     NTSTATUS (*entry)(void) = NULL;
+     sigset_t sigset;
+     NTSTATUS status = STATUS_DLL_NOT_FOUND;
+     struct builtin_module *builtin;
++#ifdef __PROSPERO__
++    char preload_dir[1024] = "";
++#endif
+ 
+     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+     if ((builtin = get_builtin_module( module )))
+@@ -1105,8 +1132,23 @@ static NTSTATUS load_builtin_unixlib( void *module, BOOL wow, const void **funcs
+                 WARN_(module)( "failed to load %s: %s\n", debugstr_a(builtin->unix_path), dlerror() );
+         }
+         if (builtin->unix_handle) status = get_unixlib_funcs( builtin->unix_handle, wow, funcs, &entry );
++#ifdef __PROSPERO__
++        if (builtin->unix_handle && builtin->unix_path)
++        {
++            const char *tail = strrchr( builtin->unix_path, '/' );
++            if (tail && !strcmp( tail, "/win32u.so" ) &&
++                (size_t)(tail - builtin->unix_path) < sizeof(preload_dir))
++            {
++                memcpy( preload_dir, builtin->unix_path, tail - builtin->unix_path );
++                preload_dir[tail - builtin->unix_path] = 0;
++            }
++        }
++#endif
+     }
+     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
++#ifdef __PROSPERO__
++    if (!status && preload_dir[0]) ps5_preload_unixlibs( preload_dir );
++#endif
+     if (!status && entry) status = entry();
+     return status;
+ }
+-- 
+2.43.0
+

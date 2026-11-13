@@ -1,0 +1,58 @@
+From b529e6073e5f6ccf9198ddc682484fbe353022ea Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:35 -0500
+Subject: [PATCH 046/122] 0620-ntdll-generic-processor-topology.patch
+
+---
+ dlls/ntdll/unix/system.c | 33 +++++++++++++++++++++++++++++++--
+ 1 file changed, 31 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
+index 341f802..86d84df 100644
+--- a/dlls/ntdll/unix/system.c
++++ b/dlls/ntdll/unix/system.c
+@@ -1614,10 +1614,39 @@ end:
+ 
+ #else
+ 
++/* A host with no topology source (the PS5): one package, a core per logical
++ * processor, one NUMA node, and typical caches. Programs that size thread
++ * pools from GetLogicalProcessorInformation, as Microsoft's Concurrency
++ * Runtime does, fail without it. */
+ static NTSTATUS create_logical_proc_info(void)
+ {
+-    FIXME("stub\n");
+-    return STATUS_NOT_IMPLEMENTED;
++    static CACHE_DESCRIPTOR caches[] =
++    {
++        { 1, 8, 64, 32 * 1024, CacheInstruction },
++        { 1, 8, 64, 32 * 1024, CacheData },
++        { 2, 8, 64, 512 * 1024, CacheUnified },
++        { 3, 16, 64, 4 * 1024 * 1024, CacheUnified },
++    };
++    unsigned int count = peb->NumberOfProcessors, i, j;
++    ULONG_PTR all_cpus_mask = 0;
++
++    if (!count) count = 1;
++    for (i = 0; i < count; i++) all_cpus_mask |= (ULONG_PTR)1 << i;
++    if (!logical_proc_info_add_by_id( RelationProcessorPackage, 0, all_cpus_mask ))
++        return STATUS_NO_MEMORY;
++    for (i = 0; i < count; i++)
++    {
++        ULONG_PTR mask = (ULONG_PTR)1 << i;
++
++        if (!logical_proc_info_add_by_id( RelationProcessorCore, i, mask ))
++            return STATUS_NO_MEMORY;
++        for (j = 0; j < 3; j++)
++            if (!logical_proc_info_add_cache( mask, &caches[j] )) return STATUS_NO_MEMORY;
++    }
++    if (!logical_proc_info_add_cache( all_cpus_mask, &caches[3] )) return STATUS_NO_MEMORY;
++    if (!logical_proc_info_add_numa_node( all_cpus_mask, 0 )) return STATUS_NO_MEMORY;
++    logical_proc_info_add_group( count, all_cpus_mask );
++    return STATUS_SUCCESS;
+ }
+ #endif
+ 
+-- 
+2.43.0
+

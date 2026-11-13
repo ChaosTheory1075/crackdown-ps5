@@ -8,6 +8,7 @@ Put Crackdown's files here (this is PPSA53070/game/):
   game/update/, so this folder has update/Local/en-US/... and so on.
 
 DLC (optional): each package (Free-For-All Pack, Four-Play Pack), extracted
-into a folder named as the package, in ../dlc/ (install_to_ps5.ps1 does this).
+into a folder named as the package, in ../dlc/. Easier: put the packages in
+../install/ and the app extracts them itself.
 
 The menu's HOME page says what it found when the app starts.

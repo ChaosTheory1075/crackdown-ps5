@@ -1,0 +1,29 @@
+From 17cfffc095bff7cd165cb47a081ae74f4dfa3b4d Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:35 -0500
+Subject: [PATCH 037/122] 0601-ntdll-ps5-keep-i386-images-below-4gib.patch
+
+---
+ dlls/ntdll/unix/virtual.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 69f9126..cd810f7 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3312,6 +3312,12 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
+ 
+     limit_low = max( limit_low, (ULONG_PTR)address_space_start );  /* make sure the DOS area remains free */
+     if (!limit_high) limit_high = (ULONG_PTR)user_space_limit;
++#ifdef __PROSPERO__
++    /* An i386 image only runs below 4 GiB. When its preferred base is taken,
++     * the last resort below is any address, which map_view gives from the
++     * high reserved area first (0600). */
++    if (image_info->machine == IMAGE_FILE_MACHINE_I386) limit_high = min( limit_high, limit_4g - 1 );
++#endif
+ 
+     /* first try the specified base */
+ 
+-- 
+2.43.0
+

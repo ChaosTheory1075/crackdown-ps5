@@ -28,21 +28,30 @@ enum class Grade { kBronze, kSilver, kGold, kPlatinum };
 
 Grade GradeFor(uint32_t gamerscore);
 const char* GradeName(Grade grade);  // "Bronze"...
-// The achievements that count (all of Crackdown's).
-bool Here(uint32_t id);
+// Which game a UserData folder is (UserData/crackdown2: 2, else 1), and its title id: Crackdown 0x4D5307DC,
+// Crackdown 2 0x4D5308BC (the runtime keeps each game's unlocks in achievements/<title id>.toml).
+int GameOf(const std::filesystem::path& user_data);
+uint32_t TitleOf(int game);
+// The achievements this port can't earn: co-op, squad and multiplayer ones (no second player, no Xbox LIVE).
+// From each game's XDBF list (rexglue init achievements, 2026-11-05).
+bool Online(int game, uint32_t id);
 
 struct Trophy {
   uint32_t id = 0, gamerscore = 0, flags = 0, image_id = 0;
   std::string name, description, locked_description;
   int64_t earned = 0;  // unix time; 0: not earned
+  int game = 1;        // 1 Crackdown, 2 Crackdown 2, 3 Crackdown 3
   Grade grade() const { return GradeFor(gamerscore); }
   bool hidden() const { return !(flags & kShowUnachieved); }
+  // One that doesn't count toward the platinum (co-op / multiplayer / LIVE only).
+  bool online() const { return Online(game, id); }
 };
 
 struct List {
   bool loaded = false;           // the list was there (the game has started once)
   std::vector<Trophy> trophies;  // the game's order
-  int earnable = 0, earned = 0;
+  int earnable = 0, earned = 0;   // (the ones that count: online ones left out)
+  int online = 0, online_earned = 0;
   int grade_total[3] = {}, grade_earned[3] = {};
   uint32_t points = 0, points_earned = 0;
   int64_t last_earned = 0;
@@ -58,6 +67,9 @@ std::filesystem::path TitleIconFile(const std::filesystem::path& user_data);
 
 // The list with what's been earned (the runtime's unlocks file).
 List Load(const std::filesystem::path& user_data);
+// Crackdown 3's (Prospero Win): <app>/cd3/achievements/catalog.txt and <app>/cd3/trophies.txt.
+List LoadCd3(const std::filesystem::path& cd3);
+std::filesystem::path Cd3IconFile(const std::filesystem::path& cd3, uint32_t id);
 // The list's file, written when it changed (the game, as it starts).
 bool WriteCatalog(const std::filesystem::path& user_data, const std::vector<Trophy>& trophies);
 

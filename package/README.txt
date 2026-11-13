@@ -1,8 +1,9 @@
 Crackdown: ReActivated
 ======================
 
-Crackdown (Xbox 360, Title Update 6) recompiled to run natively on the PS5,
-with its DLC, your saves and its achievements as trophies. An unofficial fan
+Crackdown (Xbox 360, Title Update 6) and Crackdown 2 (Title Update 5)
+recompiled to run natively on the PS5, in one app: pick the game on the
+menu's HOME page. With their DLC, your saves and the achievements as trophies. An unofficial fan
 project: no game files are included, you need your own copy of Crackdown.
 
 What you need
@@ -11,6 +12,9 @@ What you need
 - Your Crackdown disc image (.iso) or the disc's files.
 - Title Update 6's package (TU_16L61US_0000004000000.00000000001G1).
 - Optional: the Free-For-All Pack and Four-Play Pack DLC.
+- For Crackdown 2: its disc image (or files) and Title Update 5's package
+  (TU_16L625S_0000004000000.0000000000181); optional: its DLC (Toy Box,
+  Deluge, Pre-Order Armor). See "Crackdown 2" below.
 
 Install
 -------
@@ -32,30 +36,58 @@ next to default.xex).
 
 The menu
 --------
-HOME      PLAY; an install's progress; what's missing and where it goes.
-CONTENT   the game, Title Update 6 and the two DLC packs: installed or not,
-          X installs one from install/, triangle (twice) uninstalls it.
+HOME      the two games (UP / DOWN chooses), PLAY; an install's progress;
+          what's missing and where it goes.
+CONTENT   Crackdown, Title Update 6 and its two DLC packs; Crackdown 2, its
+          Title Update 5 and its DLC: installed or not, X installs one from
+          install/, triangle (twice) uninstalls it.
 SAVES     BACK UP SAVES (to install/backups/), IMPORT an Xbox 360 save
-          package from install/, RESTORE one of the backups.
-SETTINGS  LANGUAGE          AUTO (the PS5's language) or any of the 13 on
-                            the disc.
-          BUTTON PROMPTS    PlayStation (the DualSense's buttons in the game's
-                            prompts and menus) or Xbox 360.
-          DUALSENSE         light bar, adaptive triggers and added rumble (on).
-          FPS COUNTER       off, simple or detailed, at the top left while playing.
-          SKIP INTRO        straight to the title screen (on).
+          package from install/, RESTORE one of the backups; your saves,
+          newest first.
+SETTINGS  GRAPHICS
           FRAME RATE        60 (as fast as the PS5 runs it) or 30 locked (steady).
-          ANTI-ALIASING     off or FXAA.
+          UPSCALING         FSR 1 (sharp) or bilinear: how the picture is
+                            enlarged to your TV; SHARPNESS low to high.
+          ANTI-ALIASING     off, FXAA or SMAA.
           TEXTURE FILTERING 2x to 16x anisotropic.
           GPU HELPER        a second graphics thread (on); turn it off if
                             something draws wrong.
+          FPS COUNTER       off, simple or detailed, at the top left while playing.
+          CONTROLLER
+          BUTTON PROMPTS    PlayStation (the DualSense's buttons in the game's
+                            prompts and menus) or Xbox 360.
+          DUALSENSE FEATURES light bar, adaptive triggers and added rumble (on);
+                            FEEDBACK STRENGTH low, medium or high.
+          GAME
+          LANGUAGE          AUTO (the PS5's language) or any of the 13 on
+                            the disc, or PORTUGUESE (BR): the menu, the
+                            quick menu and the trophy pop-ups in Brazilian
+                            Portuguese, and the game's text once a pt-BR
+                            text pack is installed (English until then).
+          SKIP INTRO        straight to the title screen (on).
+          CHEAT MENU        L3 + R3 opens the quick menu (on); off: no quick
+                            menu and no cheats.
+          EXPERIMENTAL
+          RENDERER          FAST (the PS5's own render targets, as always) or
+                            ACCURATE (the Xbox 360's video memory, slower).
           GPU MEMORY REFRESH  off; turn it on only if something looks stuck
                             or out of date (much slower).
+          AUDIO
           MENU MUSIC        the menu song's level.
-TROPHIES  every achievement, earned ones first, with their dates (filled in
-          once the game has been started once).
-ABOUT     the credits.
-L1 / R1 change pages, O goes back to HOME. Settings are kept in menu.ini.
+TROPHIES  each game's achievements (triangle: the other game's), earned ones
+          first, with their dates (filled in once that game has been started).
+CREDITS   who made it possible.
+L1 / R1 change pages, O goes back to HOME. SETTINGS lists the two games at
+its left: each has its own settings (menu1.ini, menu2.ini; menu.ini is the
+last started game's).
+
+Crackdown 2
+-----------
+Crackdown 2 is its own program, cd2.bin, which the menu starts when you
+PLAY it. Its saves go in
+saves/ beside Crackdown's, its trophies in UserData/crackdown2. The cheats,
+the quick menu, the PlayStation button prompts and the DualSense features
+are Crackdown's only for now.
 
 In game: the quick menu
 -----------------------
@@ -74,14 +106,14 @@ Your data (back these up before deleting or reinstalling the app!)
 ------------------------------------------------------------------
 - PPSA53070/saves/          your game saves
 - PPSA53070/UserData/       trophies (earned and their dates) and the game's cache
-- PPSA53070/menu.ini        your settings
+- PPSA53070/menu.ini        your settings (and menu1.ini, menu2.ini: each game's)
 - PPSA53070/cheats.ini      your cheats
 SAVES > BACK UP SAVES copies the first three to PPSA53070/install/backups/: copy
 that folder off the PS5. Deleting the PPSA53070 folder deletes them too.
 
 Updating to a new build
 -----------------------
-Replace eboot.bin, payloads/, sce_sys/, sce_module/ and glyphs/ (and hub/ if it changed). Keep game/,
+Replace eboot.bin, cd2.bin, payloads/, sce_sys/, sce_module/ and glyphs/ (and hub/ if it changed). Keep game/, game2/, dlc2/,
 dlc/, install/, saves/, UserData/, menu.ini and cheats.ini.
 
 Problems
@@ -89,7 +121,8 @@ Problems
 - PLAY stays grey: the HOME and CONTENT pages say what's missing.
 - An install failed: the CONTENT page says why (not enough space, not the
   right file, ...). Fix it and press X on that row.
-- Something draws wrong: SETTINGS > GPU HELPER off, then GPU MEMORY REFRESH on.
+- Something draws wrong: SETTINGS > GPU HELPER off, then GPU MEMORY REFRESH
+  on, then RENDERER ACCURATE.
 - The home screen tile, background or music didn't change after an update:
   restart the PS5 (it caches them).
 - A log of every run is written to PPSA53070/logs/. Send the newest one with

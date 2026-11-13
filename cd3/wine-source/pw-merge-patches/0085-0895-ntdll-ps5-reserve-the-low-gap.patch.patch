@@ -1,0 +1,31 @@
+From 1f58778913d8bb251dea6a21cee450e01ee2aef7 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:38 -0500
+Subject: [PATCH 085/122] 0895-ntdll-ps5-reserve-the-low-gap.patch
+
+---
+ dlls/ntdll/unix/virtual.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 57e77ab..c865efe 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -967,6 +967,14 @@ static struct builtin_module *get_builtin_module( void *module )
+     reserve_area( (void *)0x000000010000, (void *)0x000068000000 );
+     reserve_area( (void *)0x00007f000000, (void *)0x00007fff0000 );
+ #ifdef __PROSPERO__
++    /* Linux leaves 0x68000000-0x7f000000 to its own libraries; the console
++     * has none there, and it is where the i386 builtin DLLs and many of a
++     * game's DLLs go. Unreserved, every image view there is a plain fixed
++     * mapping of flexible memory: Battle.net's DLLs held 279 MiB of it.
++     * Reserved, the range is a direct memory region like the rest. The
++     * reservation refuses to overwrite, so anything already mapped there
++     * keeps its place and the halving reserves around it. */
++    reserve_area( (void *)0x000068000000, (void *)0x00007f000000 );
+     /* User space ends far below 0x7ffffe000000; reserve room for the view
+      * heap wherever the kernel has space above 4 GiB. */
+     {
+-- 
+2.43.0
+

@@ -46,19 +46,19 @@ radv_link_recipe "$stage" "$sdk_root" "$radv_archive"
     -O2 -c "$ps5dir/tools/ps5_emutls.c" -o "$stage/build/ps5-emutls-cxa.o"
 "$sdk_root/bin/prospero-clang" -c -O2 -fno-visibility-from-dllstorageclass -o "$stage/build/ps5_stat.o" "$ps5dir/tools/ps5_stat.c"
 
-link_pie() {  # extra objects, if any
+link_pie() {  # extra objects, if any (the output: $pie, default llvm-pie.elf)
     "$sdk_root/bin/prospero-lld" "${radv_linker_script[@]}" --eh-frame-hdr "${radv_link_flags[@]}" \
         --version-script "$tri/tooling/native/app-symbols.map" --exclude-libs=ALL \
         --wrap=stat --wrap=lstat \
-        -e _start -o "$stage/build/llvm-pie.elf" \
+        -e _start -o "$stage/build/${pie:-llvm-pie.elf}" \
         "$tri/build/obj/app_crt.o" "$tri/build/obj/app_cpp_runtime.o" "$stage/build/ps5_stat.o" "$@" \
         --start-group "${inputs[@]}" --end-group \
         "$tri/build/stubs/libSceAgc.so" "$tri/build/stubs/libSceAgcDriver.so" \
         "${radv_link_inputs[@]}" \
         --as-needed "$sdk_root"/target/lib/*.so
 }
-make_eboot() {
-    "$tool" link --in "$stage/build/llvm-pie.elf" --out "$stage/build/eboot.elf" \
+make_eboot() {  # (in: $pie, out: $eboot_elf; defaults llvm-pie.elf, eboot.elf)
+    "$tool" link --in "$stage/build/${pie:-llvm-pie.elf}" --out "$stage/build/${eboot_elf:-eboot.elf}" \
         --stub-dir "$sdk_root/target/lib" --stub "$tri/build/stubs/libSceAgc.so" \
         --stub "$tri/build/stubs/libSceAgcDriver.so" --module-sdk 0x02000009 \
         --companion-sdk 0x08050001 --file-name eboot.elf
@@ -81,8 +81,39 @@ fi
 app=$build/ps5-app/$title_id
 rm -rf -- "$app"
 mkdir -p "$app/sce_sys" "$app/sce_module" "$app/game" "$app/dlc" "$app/saves" "$app/logs" "$app/install"
+mkdir -p "$app/game2" "$app/dlc2"  # (Crackdown 2's)
 "$tool" self --sign --in "$stage/build/eboot.elf" --out "$app/eboot.bin" --magic 0x1D3D154F
 cp "$tri/runtime/libc.prx" "$app/sce_module/libc.prx"
+
+# Crackdown 2 (cd2.bin, which the menu starts with sceSystemServiceLoadExec), when it was built (its
+# codegen needs your Crackdown 2 files: ci/local_build.sh): linked and signed the same way.
+if ninja -C "$build" -t query crackdown2 > /dev/null 2>&1; then
+    cd1_inputs=("${inputs[@]}")
+    link_cmd=$(ninja -C "$build" -t commands crackdown2 | tail -1)
+    mapfile -t inputs < <(cd "$build" && for w in $link_cmd; do
+        case $w in
+            */libz.a) ;;  # (RADV's archive has zlib in it)
+            *.o|*.a) [[ $w = /* ]] && echo "$w" || echo "$build/$w" ;;
+        esac
+    done)
+    echo "==> [link] Crackdown 2: ${#inputs[@]} objects and libraries from CMake, with RADV, into a PS5 PIE ELF"
+    pie=crackdown2-pie.elf eboot_elf=crackdown2.eboot.elf
+    link_pie
+    if ! make_eboot 2> "$stage/build/crackdown2.err"; then
+        cat "$stage/build/crackdown2.err" >&2
+        grep -q "no room for PS5 process parameters" "$stage/build/crackdown2.err" || exit 1
+        echo "==> [link] Crackdown 2 again with 2 KB of RELRO padding"
+        "$sdk_root/bin/prospero-clang" -c -O2 -fPIC -fno-visibility-from-dllstorageclass \
+            -o "$stage/build/ps5_relro_pad.o" "$ps5dir/tools/ps5_relro_pad.c"
+        link_pie "$stage/build/ps5_relro_pad.o"
+        make_eboot
+    fi
+    "$tool" self --sign --in "$stage/build/crackdown2.eboot.elf" --out "$app/cd2.bin" --magic 0x1D3D154F
+    "$tool" self --inspect --file "$app/cd2.bin" | tail -3
+    echo "==> cd2.bin ($(stat -c %s "$app/cd2.bin") bytes)"
+    unset pie eboot_elf
+    inputs=("${cd1_inputs[@]}")
+fi
 cat > "$app/sce_sys/param.json" <<EOF
 {
   "ageLevel": { "default": 0 },
@@ -94,7 +125,7 @@ cat > "$app/sce_sys/param.json" <<EOF
   "conceptId": "${title_id:4}",
   "contentBadgeType": 1,
   "contentId": "UP9000-${title_id}_00-CRACKDOWNPS50000",
-  "contentVersion": "01.010.000",
+  "contentVersion": "02.000.000",
   "downloadDataSize": 256,
   "gameIntent": { "permittedIntents": [ { "intentType": "launchActivity" } ] },
   "localizedParameters": {
@@ -119,7 +150,7 @@ fi
 # font with them).
 mkdir -p "$app/glyphs"
 cp "$here/../package/glyphs/ps_button_glyphs.dds" "$here/../package/glyphs/ps_cross_40.png" \
-   "$here/../package/glyphs/ps_circle_40.png" "$app/glyphs/"
+   "$here/../package/glyphs/ps_circle_40.png" "$here/../package/glyphs/cd2_prompts.bin" "$app/glyphs/"  # (cd2_prompts.bin: Crackdown 2's, tools/make_cd2_prompts.py)
 cp "$here/../package/README.txt" "$app/README.txt"
 cp "$here/../package/game-README.txt" "$app/game/README.txt"
 cp "$here/../package/install-README.txt" "$app/install/README.txt"
@@ -133,6 +164,8 @@ rm -rf "$payload_build" && mkdir -p "$payload_build" && cp -r "$payload_src/." "
 make -C "$payload_build" PS5_PAYLOAD_SDK="$sdk_root"
 mkdir -p "$app/payloads"
 cp "$payload_build/crackdown-ps5-installer.elf" "$app/payloads/crackdown-ps5-installer.elf"
+# Crackdown 3's install and Xbox sign-in (cd3.cpp, with libcurl)
+cp "$payload_build/crackdown-ps5-cd3.elf" "$app/payloads/crackdown-ps5-cd3.elf"
 
 "$tool" self --inspect --file "$app/eboot.bin" | tail -3
 echo "==> $app ($(stat -c %s "$app/eboot.bin") bytes)"

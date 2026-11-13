@@ -1,0 +1,41 @@
+From 262ce2d60f014b31260a1997590fb9cd235cdaf9 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:32 -0500
+Subject: [PATCH 001/122] 0100-ntdll-no-fstab-device-on-ps5.patch
+
+---
+ dlls/ntdll/unix/file.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 8b87cc8..0c8a9b2 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -6918,7 +6918,24 @@ static inline void get_device_info_fstatfs( FILE_FS_DEVICE_INFORMATION *info, co
+ }
+ #endif
+ 
++<<<<<<<
+ static inline BOOL is_device_placeholder( int fd )
++|||||||
++#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
++#include <fstab.h>
++static char *parse_mount_entries( FILE *f, dev_t dev, ino_t ino )
++=======
++#if defined(__PROSPERO__)
++/* A PS5 title has no fstab and no device nodes for its drives, and its libc
++ * does not provide getfsent: there is never a default device to report. */
++static char *parse_mount_entries( FILE *f, dev_t dev, ino_t ino )
++{
++    return NULL;
++}
++#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
++#include <fstab.h>
++static char *parse_mount_entries( FILE *f, dev_t dev, ino_t ino )
++>>>>>>>
+ {
+     static const char wine_placeholder[] = "Wine device placeholder";
+     char buffer[sizeof(wine_placeholder)-1];
+-- 
+2.43.0
+

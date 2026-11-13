@@ -1,0 +1,53 @@
+From 99be11c2a63892721f39dd01eff7f0f3816a80b8 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:35 -0500
+Subject: [PATCH 051/122] 0671-win32u-ps5-mouse-wheel.patch
+
+---
+ dlls/win32u/ps5drv.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/win32u/ps5drv.c b/dlls/win32u/ps5drv.c
+index 286d42d..73f0d7d 100644
+--- a/dlls/win32u/ps5drv.c
++++ b/dlls/win32u/ps5drv.c
+@@ -65,7 +65,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(ps5drv);
+ /* the layout of PwWineInput in wine/ps5/pw_wine_sink.h */
+ struct ps5_input
+ {
+-    UINT type;              /* 1 key, 2 mouse move, 3 mouse button */
++    UINT type;              /* 1 key, 2 mouse move, 3 mouse button, 4 wheel */
+     UINT code;              /* virtual key, or button 0 left 1 right 2 middle */
+     INT  x, y;              /* mouse move: relative motion in desktop pixels */
+     UINT down;
+@@ -457,6 +457,17 @@ static HWND last_shown_window(void)
+     return hwnd;
+ }
+ 
++/* Windows wheel messages carry a signed 16-bit delta; cap a single poll
++ * before multiplying so rapid free-spin or a corrupt report cannot wrap. */
++static void send_wheel( HWND hwnd, INT ticks )
++{
++    INPUT input = {.type = INPUT_MOUSE};
++
++    input.mi.dwFlags = MOUSEEVENTF_WHEEL;
++    input.mi.mouseData = (DWORD)(min( max( ticks, -273 ), 273 ) * WHEEL_DELTA);
++    NtUserSendHardwareInput( hwnd, 0, &input, 0 );
++}
++
+ static void send_mouse( HWND hwnd, DWORD flags, INT x, INT y )
+ {
+     INPUT input = {.type = INPUT_MOUSE};
+@@ -574,6 +585,9 @@ static BOOL ps5_ProcessEvents( DWORD mask )
+         case 3:
+             if (event.code < 3) send_mouse( hwnd, button_flags[event.code][event.down != 0], 0, 0 );
+             break;
++        case 4:
++            if (event.x) send_wheel( hwnd, event.x );
++            break;
+         }
+     }
+     return processed != 0;
+-- 
+2.43.0
+

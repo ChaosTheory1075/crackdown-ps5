@@ -1,0 +1,87 @@
+From c9051f2abd8aa4532d3f3838d51a5d293d88c2c7 Mon Sep 17 00:00:00 2001
+From: ChaosTheory1075 <252520959+ChaosTheory1075@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 17:25:48 -0500
+Subject: [PATCH 113/122] PS5: Wine and wineserver fatal errors also go to
+ logs/wine-fatal.txt (stderr reaches no log)
+
+---
+ dlls/ntdll/unix/server.c | 22 ++++++++++++++++++++++
+ server/request.c         |  9 +++++++++
+ 2 files changed, 31 insertions(+)
+
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index 0246995..a9bf47d 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -131,12 +131,28 @@ static void fatal_perror( const char *err, ... ) __attribute__((noreturn, format
+ static void server_connect_error( const char *serverdir ) __attribute__((noreturn));
+ #endif
+ 
++
++#ifdef __PROSPERO__
++/* [cd3] stderr reaches no log on the PS5: keep a fatal error's reason where FTP can read it */
++static void ps5_fatal_note( const char *prefix, const char *err, va_list args )
++{
++    FILE *f = fopen( "/data/prospero-win/logs/wine-fatal.txt", "a" );
++    if (!f) return;
++    fprintf( f, "%s", prefix );
++    vfprintf( f, err, args );
++    fprintf( f, " (errno %d)\n", errno );
++    fclose( f );
++}
++#endif
+ /* die on a fatal error; use only during initialization */
+ static void fatal_error( const char *err, ... )
+ {
+     va_list args;
+ 
+     va_start( args, err );
++#ifdef __PROSPERO__
++    { va_list c; va_copy( c, args ); ps5_fatal_note( "wine: ", err, c ); va_end( c ); }
++#endif
+     wine_vprint_stderr( "wine: ", err, args );
+     va_end( args );
+     exit(1);
+@@ -151,6 +167,9 @@ static void fatal_perror( const char *err, ... )
+     int error = errno;
+ 
+     va_start( args, err );
++#ifdef __PROSPERO__
++    { va_list c; va_copy( c, args ); errno = error; ps5_fatal_note( "wine (perror): ", err, c ); va_end( c ); }
++#endif
+     wine_vprint_stderr( "wine: ", err, args );
+     va_end( args );
+     snprintf( reason, sizeof(reason), ": %s\n", strerror( error ) );
+@@ -166,6 +185,9 @@ static DECLSPEC_NORETURN void server_protocol_error( const char *err, ... )
+     va_list args;
+ 
+     va_start( args, err );
++#ifdef __PROSPERO__
++    { va_list c; va_copy( c, args ); ps5_fatal_note( "wine client error: ", err, c ); va_end( c ); }
++#endif
+     fprintf( stderr, "wine client error:%x: ", GetCurrentThreadId() );
+     vfprintf( stderr, err, args );
+     va_end( args );
+diff --git a/server/request.c b/server/request.c
+index 81fe8f4..8a49bab 100644
+--- a/server/request.c
++++ b/server/request.c
+@@ -131,6 +131,15 @@ void fatal_error( const char *err, ... )
+     va_list args;
+ 
+     va_start( args, err );
++#ifdef __PROSPERO__
++    {   /* [cd3] stderr reaches no log on the PS5: keep the reason where FTP can read it */
++        va_list copy;
++        FILE *f = fopen( "/data/prospero-win/logs/wine-fatal.txt", "a" );
++        va_copy( copy, args );
++        if (f) { fprintf( f, "wineserver: " ); vfprintf( f, err, copy ); fprintf( f, " (errno %d)\n", errno ); fclose( f ); }
++        va_end( copy );
++    }
++#endif
+     fprintf( stderr, "wineserver: " );
+     vfprintf( stderr, err, args );
+     va_end( args );
+-- 
+2.43.0
+

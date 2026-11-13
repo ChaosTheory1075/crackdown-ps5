@@ -1,0 +1,55 @@
+From 98af638b616c86506f5a57d4014a6d394eb99e53 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:37 -0500
+Subject: [PATCH 071/122] 0881-ntdll-ps5-report-the-cpus-a-game-runs-on.patch
+
+---
+ dlls/ntdll/unix/system.c | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
+index 86d84df..1b6ce90 100644
+--- a/dlls/ntdll/unix/system.c
++++ b/dlls/ntdll/unix/system.c
+@@ -1766,6 +1766,28 @@ static void get_random( void *buf, ULONG len )
+  *
+  * Init a couple of places with CPU related information.
+  */
++#ifdef __PROSPERO__
++/* sys/cpuset.h's cpuset_t is wider than the set the console's kernel takes,
++ * which is 64 bits wide (measured), so declare the call with that. */
++extern int cpuset_getaffinity( int level, int which, id_t id, size_t size, ULONGLONG *mask );
++
++/* A game runs on CPUs 0-12 of the console's 16 (measured: its affinity is
++ * 0x1fff), and threads of one priority there never share a CPU, so a program
++ * that starts a worker per reported CPU would have three that do not run
++ * until another blocks. Report the CPUs the process may run on instead of
++ * the ones online. */
++static long ps5_process_cpus( long online )
++{
++    ULONGLONG mask = 0;
++
++    if (cpuset_getaffinity( 3 /* CPU_LEVEL_WHICH */, 2 /* CPU_WHICH_PID */, -1, sizeof(mask), &mask ) || !mask)
++        return online;
++    /* Windows numbers CPUs from 0 and so does the console: a set that is not
++     * 0..n-1 keeps the highest one, so every CPU the process has is named. */
++    return 64 - __builtin_clzll( mask );
++}
++#endif
++
+ void init_cpu_info(void)
+ {
+     long num;
+@@ -1777,6 +1799,9 @@ void init_cpu_info(void)
+ #elif defined(CTL_HW) && defined(HW_NCPU)
+     int mib[2];
+     size_t len = sizeof(num);
++#ifdef __PROSPERO__
++    num = ps5_process_cpus( num );
++#endif
+     mib[0] = CTL_HW;
+     mib[1] = HW_NCPU;
+     if (!sysctl(mib, 2, &num, &len, NULL, 0)) cpu_count = num;
+-- 
+2.43.0
+

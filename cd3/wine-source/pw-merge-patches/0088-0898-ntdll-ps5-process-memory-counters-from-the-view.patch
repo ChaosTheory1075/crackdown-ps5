@@ -1,0 +1,140 @@
+From 993a324f75dd9c395b0026527553626849fbfcd5 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Thu, 5 Nov 2026 11:16:38 -0500
+Subject: [PATCH 088/122] 
+ 0898-ntdll-ps5-process-memory-counters-from-the-views.patch
+
+---
+ dlls/ntdll/unix/process.c      | 29 +++++++++++++++++++++
+ dlls/ntdll/unix/unix_private.h |  3 +++
+ dlls/ntdll/unix/virtual.c      | 46 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 78 insertions(+)
+
+diff --git a/dlls/ntdll/unix/process.c b/dlls/ntdll/unix/process.c
+index a45ec8e..c920891 100644
+--- a/dlls/ntdll/unix/process.c
++++ b/dlls/ntdll/unix/process.c
+@@ -1129,6 +1129,15 @@ void fill_vm_counters( VM_COUNTERS_EX *pvmi, int unix_pid )
+     }
+ }
+ 
++#elif defined(__PROSPERO__)
++
++/* A title has no /proc and no procstat, and the only process it can see is
++ * itself: its counters come from the virtual memory manager. */
++void fill_vm_counters( VM_COUNTERS_EX *pvmi, int unix_pid )
++{
++    if (unix_pid == -1 || unix_pid == getpid()) virtual_fill_vm_counters( pvmi );
++}
++
+ #else
+ 
+ void fill_vm_counters( VM_COUNTERS_EX *pvmi, int unix_pid )
+@@ -1138,6 +1147,21 @@ void fill_vm_counters( VM_COUNTERS_EX *pvmi, int unix_pid )
+ 
+ #endif
+ 
++#ifdef __PROSPERO__
++static BOOL ps5_is_own_process( HANDLE handle )
++{
++    BOOL own = FALSE;
++
++    SERVER_START_REQ( get_process_info )
++    {
++        req->handle = wine_server_obj_handle( handle );
++        if (!wine_server_call( req )) own = reply->pid == HandleToULong( NtCurrentTeb()->ClientId.UniqueProcess );
++    }
++    SERVER_END_REQ;
++    return own;
++}
++#endif
++
+ #define UNIMPLEMENTED_INFO_CLASS(c) \
+     case c: \
+         FIXME( "(process=%p) Unimplemented information class: " #c "\n", handle); \
+@@ -1274,6 +1298,11 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
+                         }
+                         SERVER_END_REQ;
+                         if (ret) break;
++#ifdef __PROSPERO__
++                        /* the server counts from /proc, which the console lacks: a handle
++                         * to this process gets its own counters */
++                        if (!pvmi.WorkingSetSize && ps5_is_own_process( handle )) fill_vm_counters( &pvmi, -1 );
++#endif
+                     }
+                     if (size >= sizeof(VM_COUNTERS_EX))
+                         pvmi.PrivateUsage = pvmi.PagefileUsage;
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 9cbbebb..2ba28d8 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -380,6 +380,9 @@ extern NTSTATUS signal_set_full_context( CONTEXT *context );
+ extern NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size );
+ extern NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size );
+ extern void fill_vm_counters( VM_COUNTERS_EX *pvmi, int unix_pid );
++#ifdef __PROSPERO__
++extern void virtual_fill_vm_counters( VM_COUNTERS_EX *pvmi );
++#endif
+ extern NTSTATUS open_hkcu_key( const char *path, HANDLE *key );
+ 
+ extern NTSTATUS sync_ioctl( HANDLE file, ULONG code, void *in_buffer, ULONG in_size,
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index fe88a26..641b79f 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -1455,6 +1455,52 @@ static void VIRTUAL_Dump(void)
+ #endif
+ 
+ 
++#ifdef __PROSPERO__
++/***********************************************************************
++ *           virtual_fill_vm_counters
++ *
++ * This process's memory counters (GetProcessMemoryInfo, ProcessVmCounters)
++ * from the views, since the console has no /proc to read them from: the
++ * address space is their total, the working set everything committed (the
++ * console does not page, so all of it is resident) and the page file usage
++ * the committed memory no file backs. A peak is the highest value a query saw.
++ */
++void virtual_fill_vm_counters( VM_COUNTERS_EX *pvmi )
++{
++    static SIZE_T peak_virtual, peak_working_set, peak_pagefile;
++    SIZE_T virtual_size = 0, working_set = 0, pagefile = 0, size, committed;
++    struct file_view *view;
++    sigset_t sigset;
++    char *base;
++    BYTE vprot;
++
++    server_enter_uninterrupted_section( &virtual_mutex, &sigset );
++    WINE_RB_FOR_EACH_ENTRY( view, &views_tree, struct file_view, entry )
++    {
++        committed = 0;
++        for (base = view->base; base != (char *)view->base + view->size; base += size)
++        {
++            size = get_vprot_range_size( base, (char *)view->base + view->size - base, VPROT_COMMITTED, &vprot );
++            if (vprot & VPROT_COMMITTED) committed += size;
++        }
++        virtual_size += view->size;
++        working_set += committed;
++        if (!(view->protect & SEC_FILE)) pagefile += committed;
++    }
++    if (virtual_size > peak_virtual) peak_virtual = virtual_size;
++    if (working_set > peak_working_set) peak_working_set = working_set;
++    if (pagefile > peak_pagefile) peak_pagefile = pagefile;
++    pvmi->VirtualSize = virtual_size;
++    pvmi->PeakVirtualSize = peak_virtual;
++    pvmi->WorkingSetSize = working_set;
++    pvmi->PeakWorkingSetSize = peak_working_set;
++    pvmi->PagefileUsage = pagefile;
++    pvmi->PeakPagefileUsage = peak_pagefile;
++    server_leave_uninterrupted_section( &virtual_mutex, &sigset );
++}
++#endif
++
++
+ /***********************************************************************
+  *           find_view
+  *
+-- 
+2.43.0
+

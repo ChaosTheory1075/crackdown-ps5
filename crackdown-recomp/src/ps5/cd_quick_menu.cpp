@@ -3,6 +3,11 @@
 // The controller is read where the game reads it: sub_827CCB18, the title's XInputGetState (r3 the
 // user, r4 the X_INPUT_STATE; the PC recomp's FilterPadState binding). After it runs, the menu takes
 // what was pressed and, while open, blanks the state the game gets.
+//
+// Built into both programs. Crackdown 2's (CD_GAME=2) reads the pad at sub_829551D8, its XInputGetState
+// (`mr r5,r4; li r4,1; b XamInputGetState`: r3 the user, r4 the state), which the game's pad poll calls for
+// each of its four pads (sub_8232F710, LR 0x8232F768); its cheats are cd2_cheats.h's (the game's own god
+// mode and infinite ammo flags), kept in /app0/cheats2.ini.
 #include "cd_quick_menu.h"
 #if REX_PLATFORM_PS5
 
@@ -25,19 +30,32 @@
 #include <rex/logging.h>
 #include <rex/ppc.h>
 
+#if defined(CD_GAME) && CD_GAME == 2
+#include "cd2_cheats.h"
+#define CD_QUICK_MENU_CD2 1
+#else
 #include "cheat_hooks.h"
 #include "cheats.h"
 #include "cheats_ps5.h"
+#define CD_QUICK_MENU_CD2 0
+#endif
 #include "crackdown_menu.h"
+#include "cd_text.h"
 
 REXCVAR_DECLARE(std::string, crackdown_fps_counter);
+REXCVAR_DEFINE_BOOL(crackdown_quick_menu, true, "Crackdown",
+                    "L3 + R3 opens the in-game quick menu (the cheats); off: no menu, and no cheats");
 
 namespace cdps5 {
 namespace {
 
+#if CD_QUICK_MENU_CD2
+namespace cheats2 = cd2::cheats;
+constexpr const char* kCheatsFile = "/app0/cheats2.ini";
+#else
 namespace cheats = crackdown::cheats;
-
 constexpr const char* kCheatsFile = "/app0/cheats.ini";
+#endif
 constexpr const char* kMenuFile = "/app0/menu.ini";
 
 // X_INPUT_GAMEPAD in the X_INPUT_STATE (big-endian): buttons, the triggers, the sticks.
@@ -84,7 +102,7 @@ void Filter(uint8_t* base, uint32_t state) {
   const bool combo_pressed = combo && (pressed & (kL3 | kR3));
   g_previous = buttons;
   if (!g_open.load(std::memory_order_relaxed)) {
-    if (combo_pressed) {
+    if (combo_pressed && REXCVAR_GET(crackdown_quick_menu)) {
       { std::lock_guard lock(g_mutex); g_events.clear(); }
       g_open.store(true, std::memory_order_release);
       REXLOG_INFO("Quick menu: open");
@@ -109,9 +127,9 @@ void Filter(uint8_t* base, uint32_t state) {
 }
 
 // menu.ini's `key` set to `value`, the other lines kept.
-void SetMenuValue(const char* key, int value) {
+void SetMenuValue(const char* key, int value, const char* file = kMenuFile) {
   std::vector<std::string> lines;
-  if (std::FILE* f = std::fopen(kMenuFile, "rb")) {
+  if (std::FILE* f = std::fopen(file, "rb")) {
     char line[256];
     while (std::fgets(line, sizeof(line), f)) lines.emplace_back(line);
     std::fclose(f);
@@ -122,13 +140,54 @@ void SetMenuValue(const char* key, int value) {
   for (std::string& l : lines)
     if (l.rfind(prefix, 0) == 0) l = entry, found = true;
   if (!found) lines.push_back(entry);
-  if (std::FILE* f = std::fopen(kMenuFile, "wb")) {
+  if (std::FILE* f = std::fopen(file, "wb")) {
     for (const std::string& l : lines) std::fputs(l.c_str(), f);
     std::fclose(f);
   }
 }
 
+// menu.ini's and the game's own file's `key` (Crackdown 2: menu2.ini, the set cd2.bin applies).
+void SetMenuValues(const char* key, int value) {
+  SetMenuValue(key, value);
+#if CD_QUICK_MENU_CD2
+  if (std::FILE* f = std::fopen("/app0/menu2.ini", "rb")) std::fclose(f), SetMenuValue(key, value, "/app0/menu2.ini");
+#endif
+}
+
 // ---- the rows ----
+
+// The PC recomp's cheat words (cheats.h, cheats.cpp: copied in by the build) in the menu's Portuguese.
+const char* Pt(const char* en) {
+  static constexpr std::pair<const char*, const char*> kWords[] = {
+      {"PLAYER", "JOGADOR"},
+      {"WEAPONS", "ARMAS"},
+      {"VEHICLE", "VEÍCULO"},
+      {"MAP", "MAPA"},
+      {"DISPLAY", "TELA"},
+      {"CONTROLLER", "CONTROLE"},
+      {"Infinite Health", "Vida Infinita"},
+      {"Movement Speed", "Velocidade de Movimento"},
+      {"Jump Height", "Altura do Pulo"},
+      {"No Fall Damage", "Sem Dano de Queda"},
+      {"Infinite Ammo", "Munição Infinita"},
+      {"Infinite Vehicle Health", "Veículo Indestrutível"},
+      {"Vehicle Speed", "Velocidade do Veículo"},
+      {"Agility Orbs on Map", "Orbes de Agilidade no Mapa"},
+      {"Hidden Orbs on Map", "Orbes Ocultos no Mapa"},
+      {"FPS Counter", "Contador de FPS"},
+      {"DualSense Features", "Recursos do DualSense"},
+      {"OFF", "DESLIGADO"},
+      {"ON", "LIGADO"},
+      {"MINIMAP", "MINIMAPA"},
+      {"MINIMAP + WORLD", "MINIMAPA + MUNDO"},
+      {"SIMPLE", "SIMPLES"},
+      {"DETAILED", "DETALHADO"},
+  };
+  if (!en || !Portuguese()) return en;
+  for (const auto& w : kWords)
+    if (std::strcmp(w.first, en) == 0) return w.second;
+  return en;
+}
 
 struct Row {
   const char* section;  // a heading over the row, or nullptr
@@ -139,6 +198,13 @@ struct Row {
 std::vector<Row> Rows() {
   std::vector<Row> rows;
   const char* last = nullptr;
+#if CD_QUICK_MENU_CD2
+  for (int i = 0; i < int(cheats2::Cheat::kCount); ++i) {
+    const char* section = cheats2::Section(cheats2::Cheat(i));
+    rows.push_back({section != last ? section : nullptr, cheats2::Label(cheats2::Cheat(i)), i});
+    last = section;
+  }
+#else
   for (size_t i = 0; i < cheats::kCheatCount; ++i) {
     const cheats::CheatInfo& info = cheats::kCheats[i];
     if (!cheats::Supported(info.cheat)) continue;
@@ -146,6 +212,7 @@ std::vector<Row> Rows() {
     rows.push_back({section != last ? section : nullptr, info.label, int(i)});
     last = section;
   }
+#endif
   rows.push_back({"DISPLAY", "FPS Counter", -1});
   rows.push_back({"CONTROLLER", "DualSense Features", -2});
   return rows;
@@ -158,35 +225,46 @@ int CounterMode() {
 
 std::string ValueOf(const Row& row) {
   if (row.cheat >= 0) {
+#if CD_QUICK_MENU_CD2
+    return Pt(cheats2::On(cheats2::Cheat(row.cheat)) ? "ON" : "OFF");
+#else
     const cheats::CheatInfo& info = cheats::kCheats[size_t(row.cheat)];
     std::string v = cheats::ValueLabel(info.kind, cheats::Value(info.cheat));
     for (char& c : v) c = char(std::toupper(static_cast<unsigned char>(c)));
-    return v;
+    return Pt(v.c_str());
+#endif
   }
-  if (row.cheat == -1) return CounterMode() == 2 ? "DETAILED" : CounterMode() == 1 ? "SIMPLE" : "OFF";
-  return rex::input::sony::GetOptions().enabled ? "ON" : "OFF";
+  if (row.cheat == -1) return Pt(CounterMode() == 2 ? "DETAILED" : CounterMode() == 1 ? "SIMPLE" : "OFF");
+  return Pt(rex::input::sony::GetOptions().enabled ? "ON" : "OFF");
 }
 
 // One step forward (or back) of the row's value.
 void Change(const Row& row, bool back) {
   if (row.cheat >= 0) {
+#if CD_QUICK_MENU_CD2
+    (void)back;  // (a toggle: either way flips it)
+    cheats2::Toggle(cheats2::Cheat(row.cheat));
+    cheats2::Save(kCheatsFile);
+#else
     const cheats::CheatInfo& info = cheats::kCheats[size_t(row.cheat)];
     for (size_t n = back ? info.values.size() - 1 : 1; n; --n) cheats::Cycle(info.cheat);
     crackdown::cheats_ps5::Save(kCheatsFile);
+#endif
+    REXLOG_INFO("Quick menu: {} {}", row.label, ValueOf(row));  // (the checklist's proof of each cheat)
   } else if (row.cheat == -1) {
     static constexpr const char* kModes[] = {"off", "simple", "detailed"};
     const int mode = (CounterMode() + (back ? 2 : 1)) % 3;
     rex::cvar::SetFlagByName("crackdown_fps_counter", kModes[mode]);
-    SetMenuValue("fps_counter", mode);
+    SetMenuValues("fps_counter", mode);
   } else {
     const bool on = !rex::input::sony::GetOptions().enabled;
     rex::input::sony::SetFeaturesEnabled(on);
-    SetMenuValue("dualsense", on ? 1 : 0);
+    SetMenuValues("dualsense", on ? 1 : 0);
   }
 }
 
 constexpr ImU32 kWhite = IM_COL32(236, 232, 226, 255), kGrey = IM_COL32(150, 146, 140, 255),
-                kGreen = IM_COL32(120, 220, 40, 255);
+                kBlue = IM_COL32(70, 165, 255, 255);
 
 ImU32 Fade(ImU32 c, float a) { return (c & 0x00FFFFFFu) | (ImU32(float(c >> 24) * a) << 24); }
 
@@ -220,17 +298,23 @@ void QuickMenu::OnDraw(ImGuiIO& io) {
   const float x = (size.x - w) * 0.5f, y0 = (size.y - h) * 0.5f;
   dl->AddRectFilled(ImVec2(0, 0), size, Fade(IM_COL32(0, 0, 0, 110), a));
   dl->AddRectFilled(ImVec2(x, y0), ImVec2(x + w, y0 + h), Fade(IM_COL32(8, 10, 12, 235), a), 10 * u);
-  dl->AddRectFilled(ImVec2(x, y0), ImVec2(x + 8 * u, y0 + h), Fade(kGreen, a), 10 * u, ImDrawFlags_RoundCornersLeft);
-  dl->AddText(item, 46 * u, ImVec2(x + 40 * u, y0 + 26 * u), Fade(kWhite, a), "QUICK MENU");
+  dl->AddRectFilled(ImVec2(x, y0), ImVec2(x + 8 * u, y0 + h), Fade(kBlue, a), 10 * u, ImDrawFlags_RoundCornersLeft);
+  dl->AddText(item, 46 * u, ImVec2(x + 40 * u, y0 + 26 * u), Fade(kWhite, a), T("QUICK MENU", "MENU RÁPIDO"));
+#if CD_QUICK_MENU_CD2
+  if (!cheats2::Available())
+    dl->AddText(body, 20 * u, ImVec2(x + 330 * u, y0 + 44 * u), Fade(kGrey, a),
+                T("(the cheats act once you're playing)", "(as trapaças valem quando você estiver jogando)"));
+#else
   if (!cheats::Available())
     dl->AddText(body, 20 * u, ImVec2(x + 330 * u, y0 + 44 * u), Fade(kGrey, a),
-                "(the cheats act once you're playing solo)");
+                T("(the cheats act once you're playing solo)", "(as trapaças valem quando você joga sozinho)"));
+#endif
   float y = y0 + 100 * u;
   for (size_t i = 0; i < rows.size(); ++i) {
     const Row& r = rows[i];
     if (r.section) {
       y += 10 * u;
-      dl->AddText(body, 20 * u, ImVec2(x + 40 * u, y), Fade(kGreen, a), r.section);
+      dl->AddText(body, 20 * u, ImVec2(x + 40 * u, y), Fade(kBlue, a), Pt(r.section));
       dl->AddRectFilled(ImVec2(x + 40 * u, y + 28 * u), ImVec2(x + w - 40 * u, y + 29 * u),
                         Fade(IM_COL32(255, 255, 255, 40), a));
       y += head_h - 10 * u;
@@ -238,25 +322,35 @@ void QuickMenu::OnDraw(ImGuiIO& io) {
     const bool sel = int(i) == row_;
     if (sel)
       dl->AddRectFilled(ImVec2(x + 24 * u, y + 2 * u), ImVec2(x + w - 24 * u, y + row_h - 2 * u),
-                        Fade(IM_COL32(120, 220, 40, 40), a), 4 * u);
-    dl->AddText(item, 28 * u, ImVec2(x + 40 * u, y + 5 * u), Fade(sel ? kWhite : kGrey, a), r.label);
+                        Fade(IM_COL32(70, 165, 255, 40), a), 4 * u);
+    dl->AddText(item, 28 * u, ImVec2(x + 40 * u, y + 5 * u), Fade(sel ? kWhite : kGrey, a), Pt(r.label));
     const std::string v = sel ? "<  " + ValueOf(r) + "  >" : ValueOf(r);
     const float vw = item->CalcTextSizeA(28 * u, FLT_MAX, 0, v.c_str()).x;
-    dl->AddText(item, 28 * u, ImVec2(x + w - 40 * u - vw, y + 5 * u), Fade(sel ? kGreen : kGrey, a), v.c_str());
+    dl->AddText(item, 28 * u, ImVec2(x + w - 40 * u - vw, y + 5 * u), Fade(sel ? kBlue : kGrey, a), v.c_str());
     y += row_h;
   }
   dl->AddText(body, 20 * u, ImVec2(x + 40 * u, y0 + h - 46 * u), Fade(kGrey, a),
-              "UP DOWN  MOVE      LEFT RIGHT / X  CHANGE      O / L3+R3  CLOSE");
+              T("UP DOWN  MOVE      LEFT RIGHT / X  CHANGE      O / L3+R3  CLOSE",
+                "CIMA BAIXO  MOVER      ESQ. DIR. / X  MUDAR      O / L3+R3  FECHAR"));
 }
 
 }  // namespace cdps5
 
 // The title's XInputGetState: r3 the user, r4 the state; returns 0 when read.
+#if CD_QUICK_MENU_CD2
+REX_EXTERN(__imp__sub_829551D8);
+REX_HOOK_RAW(sub_829551D8) {
+  const uint32_t user = ctx.r3.u32, state = ctx.r4.u32;
+  __imp__sub_829551D8(ctx, base);
+  if (user == 0 && state && ctx.r3.u32 == 0) cdps5::Filter(base, state);
+}
+#else
 REX_EXTERN(__imp__sub_827CCB18);
 REX_HOOK_RAW(sub_827CCB18) {
   const uint32_t user = ctx.r3.u32, state = ctx.r4.u32;
   __imp__sub_827CCB18(ctx, base);
   if (user == 0 && state && ctx.r3.u32 == 0) cdps5::Filter(base, state);
 }
+#endif
 
 #endif  // REX_PLATFORM_PS5
