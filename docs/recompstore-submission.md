@@ -78,8 +78,11 @@ Reagent Games or Sony. No game files are included.
 
 **Pictures**
 
-The 1.1.0 ones stay (`Downloads/Crackdown/Extras/recompstore/`: icon, 4K backdrop, transparent logo, PS5
-screenshots). Optional: add Crackdown 2 and Crackdown 3 screenshots from the PS5.
+In `Downloads/Crackdown/Extras/recompstore/`:
+- **Backdrop (new): `backdrop-trilogy-3840x2160.jpg`**: the three games side by side (Crackdown, Crackdown 2,
+  Crackdown 3) with the ReActivated emblem and "THE TRILOGY - NOW ON PS5", 4K 16:9. Also use it as the first
+  screenshot (1080p copy: `preview-trilogy.jpg`).
+- Icon `icon-512.png`, logo `logo-transparent.png` and the 1.1.0 PS5 screenshots stay.
 
 ## Anything else? (the store's setup for Your game files)
 
